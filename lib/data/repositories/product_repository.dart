@@ -1,0 +1,211 @@
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/product_model.dart';
+
+// whereIn (for favourites) → max 10 IDs per query. If you expect more, I can also code a batched fetch loop.
+
+// updateProductRating uses a transaction → prevents race conditions if multiple users review at the same time.
+class ProductRepository {
+  ProductRepository({required String businessId, required String branchId})
+    : _businessId = businessId,
+      _branchId = branchId;
+
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  CollectionReference<Object?> get _productsRef => FirebaseFirestore.instance
+      .collection('businesses')
+      .doc(_businessId)
+      .collection('branches')
+      .doc(_branchId)
+      .collection('products');
+
+  final String _businessId;
+  final String _branchId;
+
+  /// 1️⃣ Get product by ID
+  Future<ProductModel?> getProductById(String productId) async {
+    try {
+      final doc = await _productsRef.doc(productId).get();
+      if (doc.exists) {
+        return ProductModel.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+      }
+      return null;
+    } catch (e) {
+      throw Exception("Error fetching product by ID: $e");
+    }
+  }
+
+  Future<List<ProductModel>> getAllProducts() async {
+    try {
+      final doc = await _productsRef
+          .where('isAvailable', isEqualTo: true)
+          .get();
+      if (doc.docs.isEmpty) return [];
+      return doc.docs
+          .map(
+            (doc) => ProductModel.fromMap(
+              doc.data() as Map<String, dynamic>,
+              doc.id,
+            ),
+          )
+          .toList();
+    } catch (e) {
+      throw Exception("Error fetching all products: $e");
+    }
+  }
+
+  /// 2️⃣ Get favourite products by list of IDs (max 10 per query)
+  Future<List<ProductModel>> getFavouriteProducts(
+    List<String> productIds,
+  ) async {
+    try {
+      if (productIds.isEmpty) return [];
+      final query = await _productsRef
+          .where(FieldPath.documentId, whereIn: productIds.take(10).toList())
+          .get();
+
+      return query.docs
+          .map(
+            (doc) => ProductModel.fromMap(
+              doc.data() as Map<String, dynamic>,
+              doc.id,
+            ),
+          )
+          .toList();
+    } catch (e) {
+      throw Exception("Error fetching favourite products: $e");
+    }
+  }
+
+  /// 3️⃣ Get all products by Category ID
+  Future<List<ProductModel>> getProductsByCategory(String categoryId) async {
+    try {
+      final query = await _productsRef
+          .where('categoryId', isEqualTo: categoryId)
+          .where('isAvailable', isEqualTo: true)
+          .get();
+
+      return query.docs
+          .map(
+            (doc) => ProductModel.fromMap(
+              doc.data() as Map<String, dynamic>,
+              doc.id,
+            ),
+          )
+          .toList();
+    } catch (e) {
+      throw Exception("Error fetching products by category: $e");
+    }
+  }
+
+  /// 4️⃣ Update a product (Admin/Owner only)
+  Future<void> updateProduct(ProductModel product) async {
+    try {
+      await _productsRef.doc(product.productId).update(product.toMap());
+    } catch (e) {
+      throw Exception("Error updating product: $e");
+    }
+  }
+
+  /// 5️⃣ Update average rating when a review is submitted
+  Future<void> updateProductRating(String productId, double newRating) async {
+    final productDoc = _productsRef.doc(productId);
+
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(productDoc);
+
+        if (!snapshot.exists) {
+          throw Exception("Product not found");
+        }
+
+        final data = snapshot.data() as Map<String, dynamic>;
+        final currentCount = (data['reviewCount'] ?? 0) as int;
+        final currentAverage = (data['averageRating'] ?? 0.0).toDouble();
+
+        final newCount = currentCount + 1;
+        final updatedAverage =
+            ((currentAverage * currentCount) + newRating) / newCount;
+
+        transaction.update(productDoc, {
+          'reviewCount': newCount,
+          'averageRating': updatedAverage,
+          'updatedAt': DateTime.now(),
+        });
+      });
+    } catch (e) {
+      throw Exception("Error updating product rating: $e");
+    }
+  }
+
+  /// 6️⃣ Get products by multiple IDs (handles batching if >10)
+  Future<List<ProductModel>> getProductsByIds(List<String> productIds) async {
+    try {
+      if (productIds.isEmpty) return [];
+
+      final List<ProductModel> results = [];
+      final chunks = <List<String>>[];
+
+      // Firestore limitation: max 10 ids per query
+      for (var i = 0; i < productIds.length; i += 10) {
+        chunks.add(
+          productIds.sublist(
+            i,
+            i + 10 > productIds.length ? productIds.length : i + 10,
+          ),
+        );
+      }
+
+      for (final chunk in chunks) {
+        final query = await _productsRef
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+
+        results.addAll(
+          query.docs.map(
+            (doc) => ProductModel.fromMap(
+              doc.data() as Map<String, dynamic>,
+              doc.id,
+            ),
+          ),
+        );
+      }
+
+      return results;
+    } catch (e) {
+      throw Exception("Error fetching products by IDs: $e");
+    }
+  }
+
+  /// 7️⃣ Add new product
+  Future<ProductModel> addProduct(ProductModel product) async {
+    try {
+      final docId = product.productId.trim().isEmpty
+          ? _productsRef.doc().id
+          : product.productId;
+      await _productsRef.doc(docId).set(product.toMap());
+      return ProductModel(
+        productId: docId,
+        name: product.name,
+        description: product.description,
+        imageUrl: product.imageUrl,
+        price: product.price,
+        categoryId: product.categoryId,
+        isAvailable: product.isAvailable,
+        createdAt: product.createdAt,
+        updatedAt: product.updatedAt,
+        averageRating: product.averageRating,
+        reviewCount: product.reviewCount,
+      );
+    } catch (e) {
+      throw Exception("Error adding product: $e");
+    }
+  }
+
+  /// 8️⃣ Delete product by ID
+  Future<void> deleteProduct(String productId) async {
+    try {
+      await _productsRef.doc(productId).delete();
+    } catch (e) {
+      throw Exception("Error deleting product: $e");
+    }
+  }
+}

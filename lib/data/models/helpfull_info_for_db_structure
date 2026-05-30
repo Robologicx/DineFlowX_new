@@ -1,0 +1,50 @@
+# Firestore Structure
+# Menus Collection
+
+# menus (collection)
+#   menuId (doc)
+#     name: "Main Menu"
+#     description: "Our restaurant's primary menu"
+# Categories Collection
+# categories (collection)
+#   categoryId (doc)
+#     name: "Burgers"
+#     menuId: "menu001"   // Reference to the menu this category belongs to
+#     imageUrl: "..."
+# Products Collection
+# products (collection)
+#   productId (doc)
+#     name: "Cheeseburger"
+#     categoryId: "category123"
+#     price: 5.99
+#     imageUrl: "..."
+
+# Query Flow
+# When building the menu:
+# Fetch categories for a menu
+# final categoriesSnapshot = await FirebaseFirestore.instance
+#     .collection('categories')
+#     .where('menuId', isEqualTo: menuId)
+#     .get();
+
+# For each category, fetch its products
+# for (var category in categoriesSnapshot.docs) {
+#   final productsSnapshot = await FirebaseFirestore.instance
+#       .collection('products')
+#       .where('categoryId', isEqualTo: category.id)
+#       .get();
+
+#   // Map to your models here
+# }
+# Pros of This Structure
+# No need to update multiple documents when a product changes category.
+# Avoids duplication of product IDs in multiple places.
+# Easier to scale and maintain in the long run.
+# Perfectly normalized structure.
+
+# Impact on the Code We Wrote Earlier
+# Our UserModel and other unrelated parts won’t be affected.
+# We just need to create:
+# CategoryModel
+# ProductModel (with categoryId field)
+# The querying logic will be slightly different — but simpler than the hybrid method.

@@ -1,0 +1,11 @@
+{
+  "java.project.sourcePaths": [
+    "lib/presentation/client_screens"
+  ],
+  "CodeGPT.apiKey": "Anthropic",
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "cmake.sourceDirectory": "E:/Resturant order managment system/hotel_management_system-master -16-11-25/hotel_management_system-master/windows",
+  // "files.readonlyInclude": {
+  //   "**/permissions.dart": true,
+  // }
+}
