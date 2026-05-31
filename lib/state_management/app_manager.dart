@@ -21,7 +21,7 @@ import 'package:hotel_management_system/state_management/app_providers.dart';
 class AppManager {
   final Ref ref;
 
-  static const bool _allowDashboardWithoutAuth = true;
+  static const bool _allowDashboardWithoutAuth = false;
   static const bool _enableDemoSeed = false;
   static const bool _forceReseed = false;
   static const String _demoUserId = 'demo-admin';
