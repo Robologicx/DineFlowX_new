@@ -1220,6 +1220,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
   String? _selectedCategoryId;
   Uint8List? bytes;
   String? extension;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -1395,31 +1396,48 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () async {
-            if (_formKey.currentState!.validate()) {
-              try {
-                await widget.onSave(
-                  _nameController.text.trim(),
-                  _descriptionController.text.trim(),
-                  double.parse(_priceController.text.trim()),
-                  _selectedCategoryId!,
-                  _imageUrlController.text.trim().isEmpty
-                      ? null
-                      : _imageUrlController.text.trim(),
-                  bytes,
-                  extension,
-                );
-                if (!context.mounted) return;
-                Navigator.of(context).pop();
-              } catch (e) {
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Failed to save product: $e')),
-                );
-              }
-            }
-          },
-          child: const Text('Save'),
+          onPressed: _isSaving
+              ? null
+              : () async {
+                  if (!_formKey.currentState!.validate()) return;
+                  setState(() => _isSaving = true);
+                  try {
+                    await widget.onSave(
+                      _nameController.text.trim(),
+                      _descriptionController.text.trim(),
+                      double.parse(_priceController.text.trim()),
+                      _selectedCategoryId!,
+                      _imageUrlController.text.trim().isEmpty
+                          ? null
+                          : _imageUrlController.text.trim(),
+                      bytes,
+                      extension,
+                    );
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Product saved successfully.'),
+                      ),
+                    );
+                    Navigator.of(context).pop();
+                  } catch (e) {
+                    if (!mounted) return;
+                    setState(() => _isSaving = false);
+                    final message = e.toString().contains('already exists')
+                        ? 'Product already exists.'
+                        : 'Failed to save product: $e';
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(message)));
+                  }
+                },
+          child: _isSaving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Save'),
         ),
       ],
     );

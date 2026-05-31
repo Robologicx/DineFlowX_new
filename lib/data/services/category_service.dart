@@ -14,7 +14,7 @@ class CategoryService {
   /// Add category with validation
   Future<void> addCategory(
     CategoryModel category,
-    Uint8List imageBytes,
+    Uint8List? imageBytes,
     String fileExtension,
     String businessId,
     String branchId,
@@ -26,8 +26,21 @@ class CategoryService {
       throw Exception("Menu ID is required for a category.");
     }
 
+    final normalizedName = category.name.trim().toLowerCase();
+    final existingCategories = await _repository.getCategoriesByMenu(
+      category.menuId,
+    );
+    final duplicateExists = existingCategories.any(
+      (existingCategory) =>
+          existingCategory.name.trim().toLowerCase() == normalizedName,
+    );
+
+    if (duplicateExists) {
+      throw Exception('Category already exists in this menu.');
+    }
+
     try {
-      if (imageBytes.isNotEmpty) {
+      if (imageBytes != null && imageBytes.isNotEmpty) {
         // Upload image first
         final imageUrl = await _storageService.uploadProductImage(
           businessId: businessId,
@@ -43,8 +56,6 @@ class CategoryService {
     } catch (e) {
       rethrow;
     }
-
-    await _repository.addCategory(category);
   }
 
   /// Get all categories
@@ -73,9 +84,33 @@ class CategoryService {
     if (id.trim().isEmpty) {
       throw Exception("Category ID cannot be empty.");
     }
-    if (data.containsKey('name') && data['name'].trim().isEmpty) {
+    final existingCategory = await _repository.getCategoryById(id);
+    if (existingCategory == null) {
+      throw Exception('Category not found.');
+    }
+
+    final updatedName = (data['name'] ?? existingCategory.name).toString();
+    final updatedMenuId = (data['menuId'] ?? existingCategory.menuId)
+        .toString();
+
+    if (updatedName.trim().isEmpty) {
       throw Exception("Category name cannot be empty.");
     }
+
+    final normalizedName = updatedName.trim().toLowerCase();
+    final existingCategories = await _repository.getCategoriesByMenu(
+      updatedMenuId,
+    );
+    final duplicateExists = existingCategories.any(
+      (category) =>
+          category.id != id &&
+          category.name.trim().toLowerCase() == normalizedName,
+    );
+
+    if (duplicateExists) {
+      throw Exception('Category already exists in this menu.');
+    }
+
     await _repository.updateCategory(id, data);
   }
 

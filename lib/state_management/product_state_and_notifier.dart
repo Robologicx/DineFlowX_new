@@ -177,6 +177,7 @@ class ProductNotifier extends StateNotifier<ProductState> {
       state = state.copyWith(products: updatedList);
     } catch (e) {
       state = state.copyWith(error: e.toString());
+      rethrow;
     }
   }
 

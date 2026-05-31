@@ -65,6 +65,7 @@ class OrderNotifier extends StateNotifier<OrderState> {
       // await loadOrdersByUser(order.userId); // refresh list
     } catch (e) {
       state = state.copyWith(error: e.toString());
+      rethrow;
     }
   }
 

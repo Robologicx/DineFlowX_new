@@ -1,4 +1,6 @@
 // create_order_screen.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -116,14 +118,67 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
     );
   }
 
-  // Replace the _placeOrder() method in your CreateOrderScreen with this:
+  void _showStepMessage(
+    ScaffoldMessengerState messenger,
+    String message, {
+    Color? color,
+    Duration duration = const Duration(seconds: 2),
+    bool replaceCurrent = true,
+  }) {
+    if (replaceCurrent) {
+      messenger.hideCurrentSnackBar();
+    }
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: duration,
+        backgroundColor: color,
+      ),
+    );
+  }
+
+  Future<void> _printOrderInBackground(
+    OrderModel order,
+    ScaffoldMessengerState messenger,
+  ) async {
+    final printerService = ThermalPrinterService();
+
+    try {
+      _showStepMessage(
+        messenger,
+        'Background printing started...',
+        color: Colors.blue,
+        replaceCurrent: false,
+      );
+
+      await printerService.printOrderLAN(
+        order,
+        type: 'Waiter Copy',
+        timeout: const Duration(seconds: 3),
+      );
+      await printerService.printOrderLAN(
+        order,
+        type: 'Customer Copy',
+        timeout: const Duration(seconds: 3),
+      );
+    } catch (_) {
+      _showStepMessage(
+        messenger,
+        'Printer problem: printer not connected or unavailable.',
+        color: Colors.orange,
+        duration: const Duration(seconds: 4),
+      );
+    }
+  }
 
   Future<void> _placeOrder() async {
+    final messenger = ScaffoldMessenger.of(context);
+
     if (!_formKey.currentState!.validate()) return;
 
     // Validation based on order type
     if (_selectedOrderType == OrderType.dining && _selectedTable == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Text('Please select a table for dining order'),
           backgroundColor: Colors.red,
@@ -133,7 +188,7 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
     }
 
     if (_orderItems.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Text('Please add at least one product'),
           backgroundColor: Colors.red,
@@ -146,7 +201,7 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
     if (_selectedOrderType == OrderType.delivery) {
       if (_deliveryAddressController.text.trim().isEmpty &&
           _deliveryLocation == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text(
               'Please provide delivery address or select location from map',
@@ -217,79 +272,22 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
       );
 
       await orderNotifier.createOrder(order);
-      final orderState = ref.read(
-        orderProvider((
-          businessId: widget.businessId,
-          branchId: widget.branchId,
-          tableNotifier: ref.read(
-            tableProvider((
-              businessId: widget.businessId,
-              branchId: widget.branchId,
-            )).notifier,
-          ),
-        )),
-      );
-
-      final success = (!orderState.isLoading && orderState.error == null)
-          ? true
-          : false;
       setState(() => _isSubmitting = false);
 
-      if (success && mounted) {
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order placed successfully!'),
-            backgroundColor: Colors.green,
-          ),
+      if (mounted) {
+        _showStepMessage(
+          messenger,
+          'Order is placed successfully.',
+          color: Colors.green,
         );
-        try {
-          await ThermalPrinterService().printOrderLAN(
-            type: 'Waiter Copy',
-            order,
-          );
-          await ThermalPrinterService().printOrderLAN(
-            type: 'Customer Copy',
-            order,
-          );
-        } catch (e) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(e.toString())));
-        }
-        ScaffoldMessenger.of(context).removeCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.green,
-            content: Text('Printing Receipt....'),
-          ),
-        );
-
         Navigator.pop(context);
-        // Show confirmation dialog and print recipt for kitchen
-        // _showOrderConfirmationDialog(order);
-      } else {
-        // Show error from notifier
-        final errorState = ref.read(
-          orderProvider((
-            businessId: widget.businessId,
-            branchId: widget.branchId,
-            tableNotifier: ref.read(
-              tableProvider((
-                businessId: widget.businessId,
-                branchId: widget.branchId,
-              )).notifier,
-            ),
-          )),
-        );
-
-        throw Exception(errorState.error ?? 'Failed to create order');
+        unawaited(_printOrderInBackground(order, messenger));
       }
     } catch (e) {
       setState(() => _isSubmitting = false);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(
             content: Text('Error placing order: $e'),
             backgroundColor: Colors.red,

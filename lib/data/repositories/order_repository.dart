@@ -24,6 +24,19 @@ class OrderRepository {
   final String _branchId;
   final TableNotifier? _tableNotifier;
 
+  OrderModel? _safeOrderFromDoc(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    try {
+      final data = doc.data();
+      if (data.isEmpty) return null;
+      return OrderModel.fromMap(data, doc.id);
+    } catch (e) {
+      debugPrint('Skipping malformed order document ${doc.id}: $e');
+      return null;
+    }
+  }
+
   /// Create a new order
   Future<void> createOrder(OrderModel order) async {
     final Map<String, dynamic> orderMap = order.toMap();
@@ -112,6 +125,38 @@ class OrderRepository {
       debugPrint(st.toString());
       return [];
     }
+  }
+
+  /// Get all orders as a real-time stream
+  Stream<List<OrderModel>> getAllOrdersStream() {
+    return _ordersRef.orderBy('createdAt', descending: true).snapshots().map((
+      snapshot,
+    ) {
+      final orders = snapshot.docs
+          .map(_safeOrderFromDoc)
+          .whereType<OrderModel>()
+          .toList();
+      return orders;
+    });
+  }
+
+  /// Get today's orders as a real-time stream for better performance.
+  Stream<List<OrderModel>> getTodayOrdersStream() {
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day);
+    final startOfNextDay = startOfDay.add(const Duration(days: 1));
+
+    return _ordersRef
+        .where('createdAt', isGreaterThanOrEqualTo: startOfDay)
+        .where('createdAt', isLessThan: startOfNextDay)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) {
+          return snapshot.docs
+              .map(_safeOrderFromDoc)
+              .whereType<OrderModel>()
+              .toList();
+        });
   }
 
   /// Get order by Statuses

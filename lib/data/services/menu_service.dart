@@ -15,6 +15,16 @@ class MenuService {
     String? imageUrl,
     required String createdBy,
   }) async {
+    final normalizedName = name.trim().toLowerCase();
+    final existingMenus = await _menuRepository.getAllMenus();
+    final duplicateExists = existingMenus.any(
+      (menu) => menu.name.trim().toLowerCase() == normalizedName,
+    );
+
+    if (duplicateExists) {
+      throw Exception('Menu already exists.');
+    }
+
     final now = DateTime.now();
 
     final newMenu = MenuModel(
@@ -32,6 +42,18 @@ class MenuService {
 
   /// Edit an existing menu
   Future<void> editMenu(MenuModel updatedMenu) async {
+    final normalizedName = updatedMenu.name.trim().toLowerCase();
+    final existingMenus = await _menuRepository.getAllMenus();
+    final duplicateExists = existingMenus.any(
+      (menu) =>
+          menu.id != updatedMenu.id &&
+          menu.name.trim().toLowerCase() == normalizedName,
+    );
+
+    if (duplicateExists) {
+      throw Exception('Menu already exists.');
+    }
+
     final menuWithUpdatedTime = MenuModel(
       id: updatedMenu.id,
       name: updatedMenu.name,

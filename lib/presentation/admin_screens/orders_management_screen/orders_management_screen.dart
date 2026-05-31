@@ -42,6 +42,7 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
   bool canAssignWaiter = false;
   bool canChangeDiningTable = false;
   bool canViewAllOrders = false;
+  bool _showAllOrders = false;
 
   Set<OrderStatus> _selectedStatuses = {
     OrderStatus.pending,
@@ -58,21 +59,17 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
   void initState() {
     super.initState();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      tableNotifier = ref.read(
-        tableProvider((businessId: businessId, branchId: branchId)).notifier,
-      );
+    tableNotifier = ref.read(
+      tableProvider((businessId: businessId, branchId: branchId)).notifier,
+    );
 
-      _orderNotifier = ref.read(
-        orderProvider((
-          businessId: businessId,
-          branchId: branchId,
-          tableNotifier: tableNotifier,
-        )).notifier,
-      );
-
-      _orderNotifier.loadOrdersByStatus(_selectedStatuses.toList());
-    });
+    _orderNotifier = ref.read(
+      orderProvider((
+        businessId: businessId,
+        branchId: branchId,
+        tableNotifier: tableNotifier,
+      )).notifier,
+    );
   }
 
   @override
@@ -98,19 +95,26 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    OrderState orderState;
+    final ordersAsync = _showAllOrders
+        ? ref.watch(
+            allOrdersStreamProvider((
+              branchId: branchId,
+              businessId: businessId,
+              tableNotifier: tableNotifier,
+            )),
+          )
+        : ref.watch(
+            todayOrdersStreamProvider((
+              branchId: branchId,
+              businessId: businessId,
+              tableNotifier: tableNotifier,
+            )),
+          );
 
-    tableNotifier = ref.read(
-      tableProvider((businessId: businessId, branchId: branchId)).notifier,
-    );
-
-    // Capture state
-    orderState = ref.watch(
-      orderProvider((
-        branchId: branchId,
-        businessId: businessId,
-        tableNotifier: tableNotifier,
-      )),
+    final orderState = ordersAsync.when(
+      data: (orders) => OrderState(orders: orders),
+      loading: () => const OrderState(isLoading: true),
+      error: (error, _) => OrderState(error: error.toString()),
     );
 
     // 🌟 REAL-TIME BLINKING LOGIC (1 MINUTE DURATION)
@@ -167,7 +171,6 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
     }
 
     final userNotifier = ref.read(userProvider.notifier);
-    final user = ref.read(userProvider).selectedUser!;
     canCreateOrder = userNotifier.hasPermissionOfCurrentUser(
       Permissions.createOrder,
     );
@@ -198,6 +201,11 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
         centerTitle: true,
         elevation: 0,
         actions: [
+          TextButton.icon(
+            onPressed: _toggleOrderScope,
+            icon: Icon(_showAllOrders ? Icons.today : Icons.history),
+            label: Text(_showAllOrders ? 'Today Orders' : 'All Orders'),
+          ),
           if (canCreateOrder)
             IconButton(
               onPressed: () => _showCreateOrderDialog(context),
@@ -243,9 +251,11 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Status Chip Filter
-                      _buildStatusChipFilter(colorScheme),
-                      const SizedBox(height: 12),
+                      // Status filters are for daily operational view only.
+                      if (!_showAllOrders) ...[
+                        _buildStatusChipFilter(colorScheme),
+                        const SizedBox(height: 12),
+                      ],
 
                       // Type Filter (keep as is or make it chips too)
                       SingleChildScrollView(
@@ -328,7 +338,6 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
                     OrderStatus.ready,
                   };
                 });
-                _orderNotifier.loadOrdersByStatus(_selectedStatuses.toList());
               },
               icon: const Icon(Icons.access_time, size: 16),
               label: const Text('Active'),
@@ -342,7 +351,6 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
                     OrderStatus.refunded,
                   };
                 });
-                _orderNotifier.loadOrdersByStatus(_selectedStatuses.toList());
               },
               icon: const Icon(Icons.history, size: 16),
               label: const Text('History'),
@@ -351,7 +359,6 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
               TextButton.icon(
                 onPressed: () {
                   setState(() => _selectedStatuses.clear());
-                  _orderNotifier.loadOrdersByStatus(_selectedStatuses.toList());
                   // FIX: If filters are cleared, blinking should stop
                   if (_blinkTimer != null && _blinkTimer!.isActive) {
                     _blinkTimer?.cancel();
@@ -400,7 +407,6 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
                     _selectedStatuses.remove(status);
                   }
                 });
-                _orderNotifier.loadOrdersByStatus(_selectedStatuses.toList());
               },
             );
           }).toList(),
@@ -428,6 +434,20 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
 
   List<OrderModel> _filterOrders(List<OrderModel> orders) {
     var filtered = List<OrderModel>.from(orders);
+
+    // In "All Orders" mode always show complete history regardless of status.
+    if (!_showAllOrders && _selectedStatuses.isNotEmpty) {
+      filtered = filtered
+          .where((order) => _selectedStatuses.contains(order.orderStatus))
+          .toList();
+    }
+
+    // Legacy single status dropdown filter.
+    if (!_showAllOrders && _selectedStatusFilter != null) {
+      filtered = filtered
+          .where((order) => order.orderStatus == _selectedStatusFilter)
+          .toList();
+    }
 
     // Filter by type
     if (_selectedTypeFilter != null) {
@@ -589,7 +609,9 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
             Text(
               _searchQuery.isNotEmpty
                   ? 'Try adjusting your search terms or filters'
-                  : 'Orders will appear here when created',
+                  : _showAllOrders
+                  ? 'No orders found for selected filters'
+                  : 'No orders for today',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
@@ -1151,7 +1173,38 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
   }
 
   Future<void> _refreshOrders() async {
-    _orderNotifier.loadOrdersByStatus(_selectedStatuses.toList());
+    ref.invalidate(
+      todayOrdersStreamProvider((
+        branchId: branchId,
+        businessId: businessId,
+        tableNotifier: tableNotifier,
+      )),
+    );
+    ref.invalidate(
+      allOrdersStreamProvider((
+        branchId: branchId,
+        businessId: businessId,
+        tableNotifier: tableNotifier,
+      )),
+    );
+  }
+
+  void _toggleOrderScope() {
+    setState(() {
+      _showAllOrders = !_showAllOrders;
+
+      if (_showAllOrders) {
+        _selectedStatuses.clear();
+        _selectedStatusFilter = null;
+      } else {
+        _selectedStatuses = {
+          OrderStatus.pending,
+          OrderStatus.inProgress,
+          OrderStatus.ready,
+        };
+      }
+    });
+    _refreshOrders();
   }
 
   void _showOrderDetails(BuildContext context, OrderModel order) {

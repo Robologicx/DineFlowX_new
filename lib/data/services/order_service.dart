@@ -29,6 +29,16 @@ class OrderService {
     return await _orderRepository.getAllOrders();
   }
 
+  /// Listen all orders in real-time
+  Stream<List<OrderModel>> getAllOrdersStream() {
+    return _orderRepository.getAllOrdersStream();
+  }
+
+  /// Listen today's orders in real-time for lightweight loading.
+  Stream<List<OrderModel>> getTodayOrdersStream() {
+    return _orderRepository.getTodayOrdersStream();
+  }
+
   /// Get order by ID
   Future<OrderModel?> getOrderById(String orderId) async {
     return await _orderRepository.getOrderById(orderId);

@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/room_model.dart';
 import 'package:hotel_management_system/data/models/sales_model_and_management.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
@@ -579,4 +580,22 @@ final orderProvider =
     >((ref, params) {
       final service = ref.read(_orderServiceProvider(params));
       return OrderNotifier(service);
+    });
+
+final allOrdersStreamProvider =
+    StreamProvider.family<
+      List<OrderModel>,
+      ({String businessId, String branchId, TableNotifier tableNotifier})
+    >((ref, params) {
+      final service = ref.read(_orderServiceProvider(params));
+      return service.getAllOrdersStream();
+    });
+
+final todayOrdersStreamProvider =
+    StreamProvider.family<
+      List<OrderModel>,
+      ({String businessId, String branchId, TableNotifier tableNotifier})
+    >((ref, params) {
+      final service = ref.read(_orderServiceProvider(params));
+      return service.getTodayOrdersStream();
     });

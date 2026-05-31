@@ -83,6 +83,7 @@ class MenuNotifier extends StateNotifier<MenuState> {
       await loadAllMenus();
     } catch (e) {
       state = state.copyWith(error: e.toString());
+      rethrow;
     }
   }
 
@@ -92,6 +93,7 @@ class MenuNotifier extends StateNotifier<MenuState> {
       await loadAllMenus();
     } catch (e) {
       state = state.copyWith(error: e.toString());
+      rethrow;
     }
   }
 

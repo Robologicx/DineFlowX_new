@@ -700,8 +700,8 @@ class _MenuManagementScreenState extends ConsumerState<MenuManagementScreen> {
               imageUrl,
               Uint8List? imageBytes,
               String imageExtension,
-            ) {
-              _menuNotifier.createMenu(
+            ) async {
+              await _menuNotifier.createMenu(
                 name: name,
                 description: description,
                 imageUrl: imageUrl,
@@ -728,7 +728,7 @@ class _MenuManagementScreenState extends ConsumerState<MenuManagementScreen> {
               imageUrl,
               Uint8List? imageBytes,
               String imageExtension,
-            ) {
+            ) async {
               final updatedMenu = MenuModel(
                 id: menu.id,
                 name: name,
@@ -739,7 +739,7 @@ class _MenuManagementScreenState extends ConsumerState<MenuManagementScreen> {
                 createdAt: menu.createdAt,
                 updatedAt: DateTime.now(),
               );
-              _menuNotifier.updateMenu(updatedMenu);
+              await _menuNotifier.updateMenu(updatedMenu);
             },
       ),
     );
@@ -753,7 +753,7 @@ class MenuFormDialog extends StatefulWidget {
   final String? initialDescription;
   final String? initialImageUrl;
 
-  final Function(
+  final Future<void> Function(
     String name,
     String? description,
     String? imageUrl,
@@ -782,6 +782,7 @@ class _MenuFormDialogState extends State<MenuFormDialog> {
   late final TextEditingController _imageUrlController;
   Uint8List? bytes;
   String extension = '';
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -884,23 +885,46 @@ class _MenuFormDialogState extends State<MenuFormDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () {
-            if (_formKey.currentState!.validate()) {
-              widget.onSave(
-                _nameController.text.trim(),
-                _descriptionController.text.trim().isEmpty
-                    ? null
-                    : _descriptionController.text.trim(),
-                _imageUrlController.text.trim().isEmpty
-                    ? null
-                    : _imageUrlController.text.trim(),
-                bytes,
-                extension,
-              );
-              Navigator.of(context).pop();
-            }
-          },
-          child: const Text('Save'),
+          onPressed: _isSaving
+              ? null
+              : () async {
+                  if (!_formKey.currentState!.validate()) return;
+                  setState(() => _isSaving = true);
+                  try {
+                    await widget.onSave(
+                      _nameController.text.trim(),
+                      _descriptionController.text.trim().isEmpty
+                          ? null
+                          : _descriptionController.text.trim(),
+                      _imageUrlController.text.trim().isEmpty
+                          ? null
+                          : _imageUrlController.text.trim(),
+                      bytes,
+                      extension,
+                    );
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Menu saved successfully.')),
+                    );
+                    Navigator.of(context).pop();
+                  } catch (e) {
+                    if (!mounted) return;
+                    setState(() => _isSaving = false);
+                    final message = e.toString().contains('already exists')
+                        ? 'Menu already exists.'
+                        : 'Failed to save menu: $e';
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(message)));
+                  }
+                },
+          child: _isSaving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Save'),
         ),
       ],
     );

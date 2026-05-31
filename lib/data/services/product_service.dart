@@ -40,6 +40,20 @@ class ProductService {
 
   /// Admin/Owner can update a product
   Future<void> updateProduct(ProductModel product) async {
+    final normalizedName = product.name.trim().toLowerCase();
+    final existingProducts = await _repository.getProductsByCategory(
+      product.categoryId,
+    );
+    final duplicateExists = existingProducts.any(
+      (existingProduct) =>
+          existingProduct.productId != product.productId &&
+          existingProduct.name.trim().toLowerCase() == normalizedName,
+    );
+
+    if (duplicateExists) {
+      throw Exception('Product already exists in this category.');
+    }
+
     final updatedProduct = product.copyWith(updatedAt: DateTime.now());
     await _repository.updateProduct(updatedProduct);
   }
@@ -102,6 +116,19 @@ class ProductService {
     String? fileExtension,
   ) async {
     try {
+      final normalizedName = product.name.trim().toLowerCase();
+      final existingProducts = await _repository.getProductsByCategory(
+        product.categoryId,
+      );
+      final duplicateExists = existingProducts.any(
+        (existingProduct) =>
+            existingProduct.name.trim().toLowerCase() == normalizedName,
+      );
+
+      if (duplicateExists) {
+        throw Exception('Product already exists in this category.');
+      }
+
       if (imageBytes != null &&
           imageBytes.isNotEmpty &&
           fileExtension != null &&

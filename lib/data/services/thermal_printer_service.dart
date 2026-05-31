@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
@@ -29,12 +30,13 @@ class ThermalPrinterService {
     OrderModel order, {
     required String type,
     int printerPort = 9100,
+    Duration timeout = const Duration(seconds: 3),
   }) async {
     Socket? socket;
     final printerIp = await getPrimaryPrinterIP();
 
     if (printerIp == null || printerIp.isEmpty) {
-      throw Exception('No primary printer found in database');
+      throw Exception('Printer not connected.');
     }
     try {
       // 1️⃣ Generate ESC/POS bytes
@@ -44,20 +46,20 @@ class ThermalPrinterService {
       );
 
       // 2️⃣ Connect to printer
-      socket = await Socket.connect(
-        printerIp,
-        printerPort,
-        // timeout: const Duration(seconds: 5),
-      );
+      socket = await Socket.connect(printerIp, printerPort, timeout: timeout);
 
       // 3️⃣ Send bytes
       socket.add(bytes);
-      await socket.flush();
+      await socket.flush().timeout(timeout);
 
       // 4️⃣ Optional small delay
-      await Future.delayed(const Duration(milliseconds: 500));
-    } catch (e) {
-      rethrow;
+      await Future.delayed(const Duration(milliseconds: 300));
+    } on SocketException {
+      throw Exception('Printer not connected.');
+    } on TimeoutException {
+      throw Exception('Printer not responding.');
+    } catch (_) {
+      throw Exception('Printer problem.');
     } finally {
       socket?.destroy();
     }

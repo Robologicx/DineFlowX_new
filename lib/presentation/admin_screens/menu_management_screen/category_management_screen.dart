@@ -849,7 +849,7 @@ class _CategoryManagementScreenState
         menus: menus,
         initialMenuId:
             widget.menuId, // Pre-select menu if coming from menu screen
-        onSave: (name, menuId, imageUrl, imageBytes, imageExtension) {
+        onSave: (name, menuId, imageUrl, imageBytes, imageExtension) async {
           final category = CategoryModel(
             id: DateTime.now().millisecondsSinceEpoch
                 .toString(), // Temporary ID
@@ -859,9 +859,9 @@ class _CategoryManagementScreenState
             createdAt: DateTime.now(),
             updatedAt: DateTime.now(),
           );
-          notifier.addCategory(
+          await notifier.addCategory(
             category,
-            imageBytes!,
+            imageBytes,
             imageExtension,
             businessId,
             branchId,
@@ -886,8 +886,8 @@ class _CategoryManagementScreenState
         initialName: category.name,
         initialMenuId: category.menuId,
         initialImageUrl: category.imageUrl,
-        onSave: (name, menuId, imageUrl, imageFile, imageBytes) {
-          notifier.updateCategory(category.id, {
+        onSave: (name, menuId, imageUrl, imageFile, imageBytes) async {
+          await notifier.updateCategory(category.id, {
             'name': name,
             'menuId': menuId,
             'imageUrl': imageUrl,
@@ -905,7 +905,7 @@ class CategoryFormDialog extends StatefulWidget {
   final String? initialMenuId;
   final String? initialImageUrl;
 
-  final Function(
+  final Future<void> Function(
     String name,
     String menuId,
     String? imageUrl,
@@ -935,6 +935,7 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
   String? _selectedMenuId;
   Uint8List? bytes;
   String extension = '';
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -1049,21 +1050,46 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () {
-            if (_formKey.currentState!.validate()) {
-              widget.onSave(
-                _nameController.text.trim(),
-                _selectedMenuId!,
-                _imageUrlController.text.trim().isEmpty
-                    ? null
-                    : _imageUrlController.text.trim(),
-                bytes,
-                extension,
-              );
-              Navigator.of(context).pop();
-            }
-          },
-          child: const Text('Save'),
+          onPressed: _isSaving
+              ? null
+              : () async {
+                  if (!_formKey.currentState!.validate()) return;
+                  setState(() => _isSaving = true);
+                  try {
+                    await widget.onSave(
+                      _nameController.text.trim(),
+                      _selectedMenuId!,
+                      _imageUrlController.text.trim().isEmpty
+                          ? null
+                          : _imageUrlController.text.trim(),
+                      bytes,
+                      extension,
+                    );
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Category saved successfully.'),
+                      ),
+                    );
+                    Navigator.of(context).pop();
+                  } catch (e) {
+                    if (!mounted) return;
+                    setState(() => _isSaving = false);
+                    final message = e.toString().contains('already exists')
+                        ? 'Category already exists.'
+                        : 'Failed to save category: $e';
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(message)));
+                  }
+                },
+          child: _isSaving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Save'),
         ),
       ],
     );

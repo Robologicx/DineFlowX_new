@@ -73,7 +73,7 @@ class CategoryNotifier extends StateNotifier<CategoryState> {
 
   Future<void> addCategory(
     CategoryModel category,
-    Uint8List imageBytes,
+    Uint8List? imageBytes,
     String fileExtension,
     String businessId,
     String branchId,
@@ -89,6 +89,7 @@ class CategoryNotifier extends StateNotifier<CategoryState> {
       state = state.copyWith(categories: [...state.categories, category]);
     } catch (e) {
       state = state.copyWith(error: e.toString());
+      rethrow;
     }
   }
 
@@ -108,6 +109,7 @@ class CategoryNotifier extends StateNotifier<CategoryState> {
       state = state.copyWith(categories: updatedCategories);
     } catch (e) {
       state = state.copyWith(error: e.toString());
+      rethrow;
     }
   }
 
