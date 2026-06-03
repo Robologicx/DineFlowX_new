@@ -1,10 +1,12 @@
 // role_repository.dart
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
+import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
 import 'package:hotel_management_system/data/models/role_model.dart';
 
 class RoleRepository {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-
   final String _businessId;
   final String _branchId;
 
@@ -12,12 +14,86 @@ class RoleRepository {
     : _businessId = businessId,
       _branchId = branchId;
 
-  CollectionReference<Object?> get _rolesRef => FirebaseFirestore.instance
+  CollectionReference<Map<String, dynamic>> get _rolesRef => FirebaseFirestore
+      .instance
       .collection('businesses')
       .doc(_businessId)
       .collection('branches')
       .doc(_branchId)
       .collection('roles');
+
+  List<RoleModel> _mergeRolesPreferLocal({
+    required List<RoleModel> local,
+    required List<RoleModel> remote,
+  }) {
+    final merged = <String, RoleModel>{};
+    for (final role in remote) {
+      merged[role.id] = role;
+    }
+    for (final role in local) {
+      merged[role.id] = role;
+    }
+    final list = merged.values.toList(growable: false);
+    list.sort((a, b) => a.name.compareTo(b.name));
+    return list;
+  }
+
+  Stream<List<RoleModel>> _hybridRolesStream() {
+    return Stream.multi((controller) {
+      List<RoleModel> latestRemote = const [];
+      StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? remoteSub;
+      Timer? localTick;
+      bool isCancelled = false;
+
+      Future<void> emitMerged() async {
+        if (isCancelled) return;
+        final localRows = await OfflineLocalReadService.instance
+            .getBranchCollection(
+              businessId: _businessId,
+              branchId: _branchId,
+              collectionName: 'roles',
+            );
+        if (isCancelled) return;
+
+        final local = localRows
+            .map(
+              (row) => RoleModel.fromMap({
+                ...row,
+                'id': (row['__documentId'] ?? '').toString(),
+              }),
+            )
+            .toList(growable: false);
+
+        controller.add(
+          _mergeRolesPreferLocal(local: local, remote: latestRemote),
+        );
+      }
+
+      localTick = Timer.periodic(const Duration(seconds: 2), (_) {
+        unawaited(emitMerged());
+      });
+
+      remoteSub = _rolesRef.snapshots().listen(
+        (snapshot) {
+          latestRemote = snapshot.docs
+              .map((doc) => RoleModel.fromFirestore(doc))
+              .toList(growable: false);
+          unawaited(emitMerged());
+        },
+        onError: (_) {
+          // Keep local polling alive even if remote stream fails.
+        },
+      );
+
+      unawaited(emitMerged());
+
+      controller.onCancel = () {
+        isCancelled = true;
+        localTick?.cancel();
+        remoteSub?.cancel();
+      };
+    });
+  }
 
   Future<void> createRole(RoleModel role) async {
     // Generate a new Firestore document ID
@@ -28,33 +104,72 @@ class RoleRepository {
     map['id'] = newId; // Add the new ID to the map
 
     // Set the data to Firestore
-    await _rolesRef.doc(newId).set(map);
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath: 'businesses/$_businessId/branches/$_branchId/roles/$newId',
+      data: map,
+      merge: false,
+    );
   }
 
   Future<RoleModel?> getRoleById(String roleId) async {
+    final localDoc = await OfflineLocalReadService.instance.getBranchDocument(
+      businessId: _businessId,
+      branchId: _branchId,
+      collectionName: 'roles',
+      documentId: roleId,
+    );
+    if (localDoc != null) {
+      return RoleModel.fromMap({...localDoc, 'id': roleId});
+    }
+
     final doc = await _rolesRef.doc(roleId).get();
     if (!doc.exists) return null;
     return RoleModel.fromFirestore(doc);
   }
 
   Future<void> updateRole(RoleModel role) async {
-    await _rolesRef.doc(role.id).update(role.toMap());
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/roles/${role.id}',
+      data: role.toMap(),
+      merge: true,
+    );
   }
 
   Future<void> deleteRole(String roleId) async {
-    await _rolesRef.doc(roleId).delete();
+    await OfflineFirestoreWriteQueueService.instance.deleteOrQueue(
+      documentPath: 'businesses/$_businessId/branches/$_branchId/roles/$roleId',
+    );
   }
 
   /// Get all roles for a specific business
   Future<List<RoleModel>> getRolesByBusiness(String businessId) async {
     try {
-      final q = await _rolesRef
-          // .where('businessId', isEqualTo: businessId)
-          // .orderBy('name')
-          .get();
-      return q.docs
-          .map((d) => RoleModel.fromMap(d.data() as Map<String, dynamic>))
+      final localRows = await OfflineLocalReadService.instance
+          .getBranchCollection(
+            businessId: _businessId,
+            branchId: _branchId,
+            collectionName: 'roles',
+          );
+      final local = localRows
+          .map(
+            (row) => RoleModel.fromMap({
+              ...row,
+              'id': (row['__documentId'] ?? '').toString(),
+            }),
+          )
           .toList(growable: false);
+
+      try {
+        final q = await _rolesRef.get();
+        final remote = q.docs
+            .map((d) => RoleModel.fromFirestore(d))
+            .toList(growable: false);
+        return _mergeRolesPreferLocal(local: local, remote: remote);
+      } catch (_) {
+        local.sort((a, b) => a.name.compareTo(b.name));
+        return local;
+      }
     } catch (e) {
       return [];
     }
@@ -69,69 +184,69 @@ class RoleRepository {
     final prefix = searchTerm.trim().toLowerCase();
     if (prefix.isEmpty) return [];
 
+    final localRows = await OfflineLocalReadService.instance
+        .getBranchCollection(
+          businessId: _businessId,
+          branchId: _branchId,
+          collectionName: 'roles',
+        );
+    if (localRows.isNotEmpty) {
+      return localRows
+          .where(
+            (row) =>
+                ((row['name'] ?? '').toString().toLowerCase()).contains(prefix),
+          )
+          .take(limit)
+          .map(
+            (row) => RoleModel.fromMap({
+              ...row,
+              'id': (row['__documentId'] ?? '').toString(),
+            }),
+          )
+          .toList();
+    }
+
     final q = await _rolesRef
         .where('name_lower', isGreaterThanOrEqualTo: prefix)
         .where('name_lower', isLessThanOrEqualTo: '$prefix\uf8ff')
         .limit(limit)
         .get();
 
-    return q.docs
-        .map((d) => RoleModel.fromMap(d.data()! as Map<String, dynamic>))
-        .toList();
+    return q.docs.map((d) => RoleModel.fromMap(d.data())).toList();
   }
 
   /// Get roles that contain a specific permission
   Future<List<RoleModel>> getRolesByPermission(String permissionId) async {
-    final rolesSnapshot = await _firestore.collectionGroup('roles').get();
-
-    List<RoleModel> rolesWithPermission = [];
-
-    for (final doc in rolesSnapshot.docs) {
-      try {
-        final roleData = doc.data();
-        final permissions = roleData['permissions'] as List<dynamic>? ?? [];
-
-        final hasPermission = permissions.any((perm) {
-          if (perm is Map<String, dynamic>) {
-            return perm['id'] == permissionId;
-          }
-          return false;
-        });
-
-        if (hasPermission) {
-          final role = RoleModel.fromMap(roleData);
-          rolesWithPermission.add(role);
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-
-    return rolesWithPermission;
+    final roles = await getRolesByBusiness(_businessId);
+    return roles
+        .where((role) => role.permissions.any((p) => p.id == permissionId))
+        .toList();
   }
 
   /// Streams
   Stream<RoleModel?> listenToRole(String roleId) {
-    return _rolesRef.doc(roleId).snapshots().map((doc) {
-      if (!doc.exists) return null;
-      return RoleModel.fromMap(doc.data()! as Map<String, dynamic>);
+    return _hybridRolesStream().map((roles) {
+      for (final role in roles) {
+        if (role.id == roleId) return role;
+      }
+      return null;
     });
   }
 
   Stream<List<RoleModel>> listenToBusinessRoles(String businessId) {
-    return _rolesRef
-        .orderBy('name')
-        .snapshots()
-        .map(
-          (snap) => snap.docs
-              .map((d) => RoleModel.fromMap(d.data()! as Map<String, dynamic>))
-              .toList(),
-        );
+    return _hybridRolesStream();
   }
 
   /// Check if a role exists
   Future<bool> roleExists(String roleId) async {
     if (roleId.isEmpty) return false;
+    final localDoc = await OfflineLocalReadService.instance.getBranchDocument(
+      businessId: _businessId,
+      branchId: _branchId,
+      collectionName: 'roles',
+      documentId: roleId,
+    );
+    if (localDoc != null) return true;
     final doc = await _rolesRef.doc(roleId).get();
     return doc.exists;
   }

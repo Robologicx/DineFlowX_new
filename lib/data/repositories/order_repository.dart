@@ -1,5 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
+import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
 import 'package:hotel_management_system/state_management/table_state_and_notifier.dart';
@@ -23,6 +26,120 @@ class OrderRepository {
   final String _businessId;
   final String _branchId;
   final TableNotifier? _tableNotifier;
+  static const Duration _statusUpdateWait = Duration(milliseconds: 1200);
+
+  Future<List<OrderModel>> _getLocalOrders() async {
+    final rows = await OfflineLocalReadService.instance.getBranchCollection(
+      businessId: _businessId,
+      branchId: _branchId,
+      collectionName: 'orders',
+    );
+
+    return rows
+        .where(_looksLikeFullOrderDocument)
+        .map(
+          (row) =>
+              OrderModel.fromMap(row, (row['__documentId'] ?? '').toString()),
+        )
+        .toList();
+  }
+
+  bool _looksLikeFullOrderDocument(Map<String, dynamic> row) {
+    final id = (row['__documentId'] ?? '').toString();
+    if (id.isEmpty) return false;
+
+    // Guard against partial local stubs created by previous merge-write bugs.
+    const requiredKeys = [
+      'orderType',
+      'items',
+      'totalAmount',
+      'orderStatus',
+      'createdAt',
+      'updatedAt',
+    ];
+    for (final key in requiredKeys) {
+      if (!row.containsKey(key) || row[key] == null) return false;
+    }
+
+    return true;
+  }
+
+  List<OrderModel> _mergeOrdersPreferLocal({
+    required List<OrderModel> local,
+    required List<OrderModel> remote,
+  }) {
+    final merged = <String, OrderModel>{};
+
+    for (final order in remote) {
+      merged[order.orderId] = order;
+    }
+    for (final order in local) {
+      merged[order.orderId] = order;
+    }
+
+    final list = merged.values.toList();
+    list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return list;
+  }
+
+  Future<List<OrderModel>> _fetchRemoteAllOrders() async {
+    final snapshot = await _ordersRef
+        .orderBy('createdAt', descending: true)
+        .get();
+    return snapshot.docs
+        .map(_safeOrderFromDoc)
+        .whereType<OrderModel>()
+        .toList();
+  }
+
+  Stream<List<OrderModel>> _hybridOrdersStream({
+    required Query<Map<String, dynamic>> remoteQuery,
+    required List<OrderModel> Function(List<OrderModel> local) localSelector,
+  }) {
+    return Stream.multi((controller) {
+      List<OrderModel> latestRemote = <OrderModel>[];
+      StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? remoteSub;
+      Timer? localTick;
+      bool isCancelled = false;
+
+      Future<void> emitMerged() async {
+        if (isCancelled) return;
+        final local = await _getLocalOrders();
+        if (isCancelled) return;
+        final selectedLocal = localSelector(local);
+        final merged = _mergeOrdersPreferLocal(
+          local: selectedLocal,
+          remote: latestRemote,
+        );
+        controller.add(merged);
+      }
+
+      localTick = Timer.periodic(const Duration(seconds: 1), (_) {
+        unawaited(emitMerged());
+      });
+
+      remoteSub = remoteQuery.snapshots().listen(
+        (snapshot) {
+          latestRemote = snapshot.docs
+              .map(_safeOrderFromDoc)
+              .whereType<OrderModel>()
+              .toList();
+          unawaited(emitMerged());
+        },
+        onError: (_) {
+          // Keep local polling active even if remote listener errors.
+        },
+      );
+
+      unawaited(emitMerged());
+
+      controller.onCancel = () {
+        isCancelled = true;
+        localTick?.cancel();
+        remoteSub?.cancel();
+      };
+    });
+  }
 
   OrderModel? _safeOrderFromDoc(
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
@@ -37,8 +154,30 @@ class OrderRepository {
     }
   }
 
+  Future<void> _assertBusinessEnabled() async {
+    final businessDoc = await FirebaseFirestore.instance
+        .collection('businesses')
+        .doc(_businessId)
+        .get();
+
+    final data = businessDoc.data() ?? const <String, dynamic>{};
+    final status = (data['status'] ?? 'active').toString().toLowerCase();
+    final isActiveField = data['isActive'];
+    final isDeleted = data['isDeleted'] == true || status == 'deleted';
+    final isSuspended =
+        status == 'suspended' || status == 'disabled' || isActiveField == false;
+
+    if (isDeleted || isSuspended) {
+      throw StateError(
+        'Your business is disabled. Please contact DineFlowX team.',
+      );
+    }
+  }
+
   /// Create a new order
   Future<void> createOrder(OrderModel order) async {
+    await _assertBusinessEnabled();
+
     final Map<String, dynamic> orderMap = order.toMap();
 
     List<Map<String, dynamic>> mapOfOrderItems;
@@ -67,19 +206,46 @@ class OrderRepository {
     orderMap['updatedAt'] = DateTime.now();
 
     // write the modified map (was using order.toMap() before)
-    await _ordersRef.doc().set(orderMap);
+    final orderDocRef = _ordersRef.doc();
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/orders/${orderDocRef.id}',
+      data: orderMap,
+      merge: false,
+    );
 
     //////////////////////////////updat e table status /////////////////////////
     ///
     // If dining order, mark table as occupied
     if (order.orderType == OrderType.dining && order.diningTable != null) {
-      // Get the docId from the ref (adjust if your firestore returns differently)
-      final docId = _ordersRef.doc().id;
-      await updateDiningTableStatus(
-        docId,
-        order.diningTable!,
-        OrderStatus.inProgress,
-      );
+      try {
+        await updateDiningTableStatus(
+          orderDocRef.id,
+          order.diningTable!,
+          OrderStatus.inProgress,
+        ).timeout(_statusUpdateWait);
+      } on TimeoutException {
+        unawaited(
+          updateDiningTableStatus(
+            orderDocRef.id,
+            order.diningTable!,
+            OrderStatus.inProgress,
+          ).catchError((e) {
+            debugPrint('Dining table status update deferred: $e');
+          }),
+        );
+      } catch (e) {
+        unawaited(
+          updateDiningTableStatus(
+            orderDocRef.id,
+            order.diningTable!,
+            OrderStatus.inProgress,
+          ).catchError((err) {
+            debugPrint('Dining table status update deferred: $err');
+          }),
+        );
+        debugPrint('Dining table status immediate attempt failed: $e');
+      }
     }
     //////////////////update table status end/////////////////////////
 
@@ -107,19 +273,17 @@ class OrderRepository {
   /// Get all orders
   Future<List<OrderModel>> getAllOrders() async {
     try {
-      final snapshot = await _ordersRef.get();
-
-      if (snapshot.docs.isEmpty) return [];
-
-      final ordersList = snapshot.docs
-          .where((doc) => doc.data().isNotEmpty) // ✅ Skip null documents
-          .map((doc) {
-            final data = doc.data();
-            return OrderModel.fromMap(data, doc.id);
-          })
-          .toList();
-
-      return ordersList;
+      final localOrders = await _getLocalOrders();
+      try {
+        final remoteOrders = await _fetchRemoteAllOrders();
+        return _mergeOrdersPreferLocal(
+          local: localOrders,
+          remote: remoteOrders,
+        );
+      } catch (_) {
+        localOrders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return localOrders;
+      }
     } catch (e, st) {
       debugPrint("🔥 Error fetching orders: $e");
       debugPrint(st.toString());
@@ -129,15 +293,10 @@ class OrderRepository {
 
   /// Get all orders as a real-time stream
   Stream<List<OrderModel>> getAllOrdersStream() {
-    return _ordersRef.orderBy('createdAt', descending: true).snapshots().map((
-      snapshot,
-    ) {
-      final orders = snapshot.docs
-          .map(_safeOrderFromDoc)
-          .whereType<OrderModel>()
-          .toList();
-      return orders;
-    });
+    return _hybridOrdersStream(
+      remoteQuery: _ordersRef.orderBy('createdAt', descending: true),
+      localSelector: (local) => local,
+    );
   }
 
   /// Get today's orders as a real-time stream for better performance.
@@ -146,17 +305,18 @@ class OrderRepository {
     final startOfDay = DateTime(now.year, now.month, now.day);
     final startOfNextDay = startOfDay.add(const Duration(days: 1));
 
-    return _ordersRef
-        .where('createdAt', isGreaterThanOrEqualTo: startOfDay)
-        .where('createdAt', isLessThan: startOfNextDay)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snapshot) {
-          return snapshot.docs
-              .map(_safeOrderFromDoc)
-              .whereType<OrderModel>()
-              .toList();
-        });
+    return _hybridOrdersStream(
+      remoteQuery: _ordersRef
+          .where('createdAt', isGreaterThanOrEqualTo: startOfDay)
+          .where('createdAt', isLessThan: startOfNextDay)
+          .orderBy('createdAt', descending: true),
+      localSelector: (local) => local.where((order) {
+        return order.createdAt.isAfter(
+              startOfDay.subtract(const Duration(milliseconds: 1)),
+            ) &&
+            order.createdAt.isBefore(startOfNextDay);
+      }).toList(),
+    );
   }
 
   /// Get order by Statuses
@@ -164,26 +324,50 @@ class OrderRepository {
     List<OrderStatus> orderStatuses,
   ) async {
     if (orderStatuses.isEmpty) return null;
-    final list = await _ordersRef
-        .where(
-          'orderStatus',
-          whereIn: orderStatuses
-              .map((e) => e.toString().split('.').last)
-              .toList(),
-        )
-        .get();
 
-    if (list.docs.isEmpty) return null;
-    List<OrderModel> orders = [];
+    final set = orderStatuses.toSet();
+    final localOrders = await _getLocalOrders();
+    final localFiltered = localOrders
+        .where((order) => set.contains(order.orderStatus))
+        .toList();
 
-    for (var doc in list.docs) {
-      orders.add(OrderModel.fromMap(doc.data(), doc.id));
+    try {
+      final list = await _ordersRef
+          .where(
+            'orderStatus',
+            whereIn: orderStatuses
+                .map((e) => e.toString().split('.').last)
+                .toList(),
+          )
+          .get();
+
+      final remoteFiltered = list.docs
+          .map((doc) => OrderModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      final merged = _mergeOrdersPreferLocal(
+        local: localFiltered,
+        remote: remoteFiltered,
+      );
+      return merged.isEmpty ? null : merged;
+    } catch (_) {
+      localFiltered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return localFiltered.isEmpty ? null : localFiltered;
     }
-    return orders;
   }
 
   /// Get order by ID
   Future<OrderModel?> getOrderById(String orderId) async {
+    final localDoc = await OfflineLocalReadService.instance.getBranchDocument(
+      businessId: _businessId,
+      branchId: _branchId,
+      collectionName: 'orders',
+      documentId: orderId,
+    );
+    if (localDoc != null) {
+      return OrderModel.fromMap(localDoc, orderId);
+    }
+
     final doc = await _ordersRef.doc(orderId).get();
     if (!doc.exists) return null;
 
@@ -193,30 +377,50 @@ class OrderRepository {
 
   /// Get all orders for a user
   Future<List<OrderModel>> getOrdersByUser(String userId) async {
-    final querySnapshot = await _ordersRef
-        .where('userId', isEqualTo: userId)
-        .get();
+    final localOrders = await _getLocalOrders();
+    final localFiltered = localOrders
+        .where((order) => (order.userId ?? '') == userId)
+        .toList();
 
-    return querySnapshot.docs.map((doc) {
-      final data = doc.data();
-      return OrderModel.fromMap(data, doc.id);
-    }).toList();
+    try {
+      final querySnapshot = await _ordersRef
+          .where('userId', isEqualTo: userId)
+          .get();
+
+      final remoteFiltered = querySnapshot.docs
+          .map((doc) => OrderModel.fromMap(doc.data(), doc.id))
+          .toList();
+      return _mergeOrdersPreferLocal(
+        local: localFiltered,
+        remote: remoteFiltered,
+      );
+    } catch (_) {
+      localFiltered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return localFiltered;
+    }
   }
 
   /// Update order status
   Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
-    await _ordersRef.doc(orderId).update({
-      'orderStatus': status.toString().split('.').last,
-      'updatedAt': DateTime.now(),
-    });
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/orders/$orderId',
+      data: {
+        'orderStatus': status.toString().split('.').last,
+        'updatedAt': DateTime.now(),
+      },
+      merge: true,
+    );
   }
 
   /// Change dining table number (for waiters/admins)
   Future<void> updateDiningTable(String orderId, TableModel table) async {
-    await _ordersRef.doc(orderId).update({
-      'diningTable': table.toMap(),
-      'updatedAt': DateTime.now(),
-    });
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/orders/$orderId',
+      data: {'diningTable': table.toMap(), 'updatedAt': DateTime.now()},
+      merge: true,
+    );
   }
 
   Future<void> updateDiningTableStatus(
@@ -224,17 +428,29 @@ class OrderRepository {
     TableModel table,
     OrderStatus orderStatus,
   ) async {
-    if (orderStatus == OrderStatus.completed ||
-        orderStatus == OrderStatus.cancelled ||
-        orderStatus == OrderStatus.refunded) {
-      _tableNotifier?.releaseTable(table.id);
-    } else {
-      _tableNotifier?.occupyTable(table.id);
+    final tableStatus =
+        (orderStatus == OrderStatus.completed ||
+            orderStatus == OrderStatus.cancelled ||
+            orderStatus == OrderStatus.refunded)
+        ? TableStatus.available
+        : TableStatus.occupied;
+
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/diningTables/${table.id}',
+      data: {
+        'id': table.id,
+        'businessId': table.businessId,
+        'branchId': table.branchId,
+        'status': tableStatus.name,
+        'updatedAt': DateTime.now().toIso8601String(),
+      },
+      merge: true,
+    );
+
+    if (_tableNotifier != null) {
+      unawaited(_tableNotifier.loadAllTables());
     }
-    // await _ordersRef.doc(orderId).update({
-    //   'diningTable': table.toMap(),
-    //   'updatedAt': DateTime.now(),
-    // });
   }
 
   /// ✅ Assign waiter to an order (for admin/owner)
@@ -243,15 +459,23 @@ class OrderRepository {
     String waiterId,
     String waiterName,
   ) async {
-    await _ordersRef.doc(orderId).update({
-      'waiterId': waiterId,
-      'waiterName': waiterName,
-      'updatedAt': DateTime.now(),
-    });
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/orders/$orderId',
+      data: {
+        'waiterId': waiterId,
+        'waiterName': waiterName,
+        'updatedAt': DateTime.now(),
+      },
+      merge: true,
+    );
   }
 
   /// Delete an order (optional, for admin/owner only)
   Future<void> deleteOrder(String orderId) async {
-    await _ordersRef.doc(orderId).delete();
+    await OfflineFirestoreWriteQueueService.instance.deleteOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/orders/$orderId',
+    );
   }
 }

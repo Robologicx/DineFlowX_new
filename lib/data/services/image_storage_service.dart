@@ -108,6 +108,23 @@ class StorageService {
     await _repository.deleteFile(imageUrl);
   }
 
+  Future<String> updateRestaurantLogo({
+    required String businessId,
+    required String branchId,
+    required Uint8List imageBytes,
+    required String fileExtension,
+    String? oldImageUrl,
+  }) async {
+    return _repository.updateFile(
+      businessId: businessId,
+      branchId: branchId,
+      folder: 'restaurant_logos',
+      newBytes: imageBytes,
+      fileExtension: fileExtension,
+      oldFileUrl: oldImageUrl,
+    );
+  }
+
   // ---------- VALIDATION ----------
   bool isValidImageFile(String filePath) {
     final extension = filePath.split('.').last.toLowerCase();

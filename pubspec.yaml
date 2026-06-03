@@ -37,6 +37,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   firebase_core: ^4.0.0
+  cloud_functions: ^6.0.1
   riverpod: ^2.6.1
   google_maps_flutter: ^2.12.3
   cloud_firestore: ^6.0.1
@@ -48,6 +49,7 @@ dependencies:
   google_fonts: ^6.3.0
   flutter_colorpicker: ^1.1.0
   shared_preferences: ^2.5.3
+  connectivity_plus: ^6.1.1
   dynamic_color: ^1.8.1
   lottie: ^3.3.1
   provider: ^6.1.5+1
@@ -72,11 +74,14 @@ dependencies:
   shimmer_animation: ^2.2.2
   go_router: ^16.2.5
   hive_flutter: ^1.1.0
+  isar: ^3.1.0+1
+  isar_flutter_libs: ^3.1.0+1
   intl: ^0.20.2
   gallery_saver_plus: ^3.2.9
 
   # Image Picking - Well maintained by Flutter Team
   image_picker: ^1.0.4
+  file_picker: ^8.1.7
   
   firebase_storage: ^13.0.3
   universal_html: ^2.2.4
@@ -99,6 +104,8 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.14.4
+  build_runner: ^2.4.13
+  isar_generator: ^3.1.0+1
 
 flutter_launcher_icons:
   android: true

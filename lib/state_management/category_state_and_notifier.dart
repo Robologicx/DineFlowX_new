@@ -2,9 +2,9 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/models/category_model.dart';
-import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/repositories/category_repository.dart';
 import 'package:hotel_management_system/data/services/category_service.dart';
+import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 
 class CategoryState {
   final List<CategoryModel> categories;
@@ -126,8 +126,9 @@ class CategoryNotifier extends StateNotifier<CategoryState> {
 }
 
 final categoryNotifierprovideer = Provider<CategoryRepository>((ref) {
+  final tenantContext = ref.watch(tenantContextProvider);
   return CategoryRepository(
-    branchId: BusinessRepository.temporaryBranchId,
-    businessId: BusinessRepository.temporaryBusinesshId,
+    branchId: tenantContext.branchId,
+    businessId: tenantContext.businessId,
   );
 });

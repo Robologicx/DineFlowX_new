@@ -59,6 +59,13 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
   void initState() {
     super.initState();
 
+    final currentUser = ref.read(userProvider).selectedUser;
+    businessId =
+        currentUser?.primarybusinessId ??
+        BusinessRepository.temporaryBusinesshId;
+    branchId =
+        currentUser?.primaryBranchId ?? BusinessRepository.temporaryBranchId;
+
     tableNotifier = ref.read(
       tableProvider((businessId: businessId, branchId: branchId)).notifier,
     );

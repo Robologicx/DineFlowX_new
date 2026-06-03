@@ -1,5 +1,4 @@
 import 'package:hotel_management_system/data/models/table_model.dart';
-import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/repositories/table_repository.dart';
 import 'package:hotel_management_system/routes/client_app_routes.dart';
 
@@ -49,11 +48,20 @@ class TableService {
       }
 
       // Check if table number is unique
-      final isUnique = await _repository.isTableNumberUnique(table.tableNumber);
-      if (!isUnique) {
-        throw Exception(
-          'Table with number "${table.tableNumber}" already exists',
+      try {
+        final isUnique = await _repository.isTableNumberUnique(
+          table.tableNumber,
         );
+        if (!isUnique) {
+          throw Exception(
+            'Table with number "${table.tableNumber}" already exists',
+          );
+        }
+      } catch (e) {
+        if (e.toString().toLowerCase().contains('already exists')) {
+          rethrow;
+        }
+        // Offline/no-cache path: allow local save and cloud sync later.
       }
 
       await _repository.createTable(table);
@@ -65,12 +73,6 @@ class TableService {
 
   Future<void> updateTable(TableModel table) async {
     try {
-      // Validate table exists
-      final existingTable = await _repository.getTableById(table.id);
-      if (existingTable == null) {
-        throw Exception('Table with ID "${table.id}" not found');
-      }
-
       // Validation
       if (!isValidTableNumber(table.tableNumber)) {
         throw Exception('Table number must be between 1-50 characters');
@@ -80,18 +82,27 @@ class TableService {
       }
 
       // Check if table number is unique (excluding current table)
-      final isUnique = await _repository.isTableNumberUnique(table.tableNumber);
-      if (!isUnique) {
-        final existingWithNumber = await _repository.searchTables(
+      try {
+        final isUnique = await _repository.isTableNumberUnique(
           table.tableNumber,
-          limit: 1,
         );
-        if (existingWithNumber.isNotEmpty &&
-            existingWithNumber.first.id != table.id) {
-          throw Exception(
-            'Table with number "${table.tableNumber}" already exists',
+        if (!isUnique) {
+          final existingWithNumber = await _repository.searchTables(
+            table.tableNumber,
+            limit: 1,
           );
+          if (existingWithNumber.isNotEmpty &&
+              existingWithNumber.first.id != table.id) {
+            throw Exception(
+              'Table with number "${table.tableNumber}" already exists',
+            );
+          }
         }
+      } catch (e) {
+        if (e.toString().toLowerCase().contains('already exists')) {
+          rethrow;
+        }
+        // Offline/no-cache path: allow local save and cloud sync later.
       }
 
       await _repository.updateTable(table);
@@ -130,16 +141,6 @@ class TableService {
     try {
       if (tableId.isEmpty) throw Exception('Table ID cannot be empty');
 
-      final table = await _repository.getTableById(tableId);
-      if (table == null) throw Exception('Table not found');
-
-      // Validate status transition
-      if (!isValidStatusTransition(table.status, status)) {
-        throw Exception(
-          'Invalid status transition from ${table.status.name} to ${status.name}',
-        );
-      }
-
       await _repository.updateTableStatus(tableId, status);
     } catch (e) {
       if (e is Exception) rethrow;
@@ -151,13 +152,6 @@ class TableService {
   Future<void> occupyTable(String tableId) async {
     try {
       if (tableId.isEmpty) throw Exception('Table ID cannot be empty');
-
-      final table = await _repository.getTableById(tableId);
-      if (table == null) throw Exception('Table not found');
-
-      if (!table.canBeOccupied) {
-        throw Exception('Table is not available for occupancy');
-      }
 
       await _repository.updateTableStatus(tableId, TableStatus.occupied);
     } catch (e) {
@@ -171,13 +165,6 @@ class TableService {
     try {
       if (tableId.isEmpty) throw Exception('Table ID cannot be empty');
 
-      final table = await _repository.getTableById(tableId);
-      if (table == null) throw Exception('Table not found');
-
-      if (!table.isOccupied) {
-        throw Exception('Table is not occupied');
-      }
-
       await _repository.updateTableStatus(tableId, TableStatus.available);
     } catch (e) {
       if (e is Exception) rethrow;
@@ -189,15 +176,6 @@ class TableService {
   Future<void> markTableAvailable(String tableId) async {
     try {
       if (tableId.isEmpty) throw Exception('Table ID cannot be empty');
-
-      final table = await _repository.getTableById(tableId);
-      if (table == null) throw Exception('Table not found');
-
-      // if (table.status != TableStatus.cleaning) {
-      //   throw Exception(
-      //     'Table must be in cleaning status to mark as available',
-      //   );
-      // }
 
       await _repository.updateTableStatus(tableId, TableStatus.available);
     } catch (e) {
@@ -230,13 +208,6 @@ class TableService {
     try {
       if (tableId.isEmpty) throw Exception('Table ID cannot be empty');
 
-      final table = await _repository.getTableById(tableId);
-      if (table == null) throw Exception('Table not found');
-
-      if (!table.isAvailable) {
-        throw Exception('Table is not available for reservation');
-      }
-
       await _repository.updateTableStatus(tableId, TableStatus.reserved);
 
       // Auto-release reservation after duration
@@ -265,13 +236,6 @@ class TableService {
   Future<void> cancelReservation(String tableId) async {
     try {
       if (tableId.isEmpty) throw Exception('Table ID cannot be empty');
-
-      final table = await _repository.getTableById(tableId);
-      if (table == null) throw Exception('Table not found');
-
-      if (!table.isReserved) {
-        throw Exception('Table is not reserved');
-      }
 
       await _repository.updateTableStatus(tableId, TableStatus.available);
     } catch (e) {
@@ -403,8 +367,8 @@ class TableService {
   //   return '${BusinessRepository.temporaryBusinesshId}::${BusinessRepository.temporaryBranchId}:$tableId';
   // }
   String generateQRCodeData(String tableId) {
-    // Include tableId as a query parameter
-    return "icetouch.org/${ClientAppRoutes.cartScreen}?tableId=$tableId&businessId=${BusinessRepository.temporaryBusinesshId}&branchId=${BusinessRepository.temporaryBranchId}";
+    // Open public client app path with tenant context.
+    return 'https://dineflowx-client.web.app/${_repository.businessId}/clientapp?tableId=$tableId&branchId=${_repository.branchId}&businessId=${_repository.businessId}';
   }
   // ---------- Stream Operations ----------
 

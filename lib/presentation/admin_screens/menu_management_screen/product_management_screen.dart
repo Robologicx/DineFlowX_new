@@ -1,16 +1,22 @@
 import 'dart:developer';
+import 'dart:convert';
+import 'dart:async';
 import 'dart:typed_data';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/models/product_model.dart';
 import 'package:hotel_management_system/data/models/category_model.dart';
+import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/permissions.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
 import 'package:hotel_management_system/state_management/product_state_and_notifier.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:universal_html/html.dart' as html;
 import 'package:uuid/uuid.dart';
 
 class ProductManagementScreen extends ConsumerStatefulWidget {
@@ -34,8 +40,8 @@ class _ProductManagementScreenState
   String? _selectedCategoryFilter;
   bool _showAvailableOnly = false;
   List<CategoryModel> _categories = [];
-  late String branchId;
-  late String businessId;
+  String branchId = BusinessRepository.temporaryBranchId;
+  String businessId = BusinessRepository.temporaryBusinesshId;
 
   @override
   void initState() {
@@ -46,17 +52,17 @@ class _ProductManagementScreenState
   void _loadInitialData() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final user = ref.read(userProvider).selectedUser;
-      if (user == null) return;
-
-      branchId = user.primaryBranchId;
-      businessId = user.primarybusinessId;
+      if (user != null) {
+        branchId = user.primaryBranchId;
+        businessId = user.primarybusinessId;
+      }
 
       // Load categories
       ref
           .read(
             categoryProvider((
-              branchId: user.primaryBranchId,
-              businessId: user.primarybusinessId,
+              branchId: branchId,
+              businessId: businessId,
             )).notifier,
           )
           .loadAllCategories()
@@ -68,10 +74,7 @@ class _ProductManagementScreenState
 
       // Load products
       final productNotifier = ref.read(
-        productProvider((
-          branchId: user.primaryBranchId,
-          businessId: user.primarybusinessId,
-        )).notifier,
+        productProvider((branchId: branchId, businessId: businessId)).notifier,
       );
 
       if (widget.categoryId != null) {
@@ -126,11 +129,13 @@ class _ProductManagementScreenState
   }
 
   ProductNotifier get _productNotifier {
-    final user = ref.read(userProvider).selectedUser!;
+    final user = ref.read(userProvider).selectedUser;
+    final effectiveBranchId = user?.primaryBranchId ?? branchId;
+    final effectiveBusinessId = user?.primarybusinessId ?? businessId;
     return ref.read(
       productProvider((
-        branchId: user.primaryBranchId,
-        businessId: user.primarybusinessId,
+        branchId: effectiveBranchId,
+        businessId: effectiveBusinessId,
       )).notifier,
     );
   }
@@ -138,35 +143,40 @@ class _ProductManagementScreenState
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(userProvider).selectedUser;
-
-    if (user == null) {
-      return Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
+    final effectiveBranchId = user?.primaryBranchId ?? branchId;
+    final effectiveBusinessId = user?.primarybusinessId ?? businessId;
 
     final userNotifier = ref.read(userProvider.notifier);
-    widget.canCreateProduct = userNotifier.hasPermissionOfCurrentUser(
-      Permissions.createProduct,
-    );
-    widget.canEditProduct = userNotifier.hasPermissionOfCurrentUser(
-      Permissions.updateProduct,
-    );
-    widget.canDeleteProduct = userNotifier.hasPermissionOfCurrentUser(
-      Permissions.deleteProduct,
-    );
+    if (user != null) {
+      widget.canCreateProduct = userNotifier.hasPermissionOfCurrentUser(
+        Permissions.createProduct,
+      );
+      widget.canEditProduct = userNotifier.hasPermissionOfCurrentUser(
+        Permissions.updateProduct,
+      );
+      widget.canDeleteProduct = userNotifier.hasPermissionOfCurrentUser(
+        Permissions.deleteProduct,
+      );
+    } else {
+      widget.canCreateProduct = true;
+      widget.canEditProduct = true;
+      widget.canDeleteProduct = true;
+    }
 
     final productsAsync = ref.watch(
       productProvider((
-        branchId: user.primaryBranchId,
-        businessId: user.primarybusinessId,
+        branchId: effectiveBranchId,
+        businessId: effectiveBusinessId,
       )),
     );
 
     final categoryState = ref.watch(
       categoryProvider((
-        branchId: user.primaryBranchId,
-        businessId: user.primarybusinessId,
+        branchId: effectiveBranchId,
+        businessId: effectiveBusinessId,
       )),
     );
+    final filteredForExport = _filterProducts(productsAsync.products);
 
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -181,6 +191,50 @@ class _ProductManagementScreenState
         centerTitle: true,
         elevation: 0,
         actions: [
+          PopupMenuButton<String>(
+            tooltip: 'Bulk Menu Import/Export',
+            icon: const Icon(Icons.table_chart_outlined),
+            onSelected: (value) async {
+              if (value == 'export') {
+                await _exportMenuToExcel(
+                  filteredForExport,
+                  categoryState.categories,
+                );
+              } else if (value == 'import') {
+                if (!widget.canCreateProduct) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'You do not have permission to import menu.',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+                await _importMenuFromExcel(categoryState.categories);
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem<String>(
+                value: 'export',
+                child: ListTile(
+                  leading: Icon(Icons.download_rounded),
+                  title: Text('Export Menu (Excel CSV)'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              if (widget.canCreateProduct)
+                const PopupMenuItem<String>(
+                  value: 'import',
+                  child: ListTile(
+                    leading: Icon(Icons.upload_file_rounded),
+                    title: Text('Import Menu (Excel CSV)'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+            ],
+          ),
           if (widget.canCreateProduct)
             IconButton(
               onPressed: () =>
@@ -1019,6 +1073,408 @@ class _ProductManagementScreenState
     return '${date.day}/${date.month}/${date.year}';
   }
 
+  String _normalizeHeader(String header) {
+    return header
+        .replaceAll('\ufeff', '')
+        .toLowerCase()
+        .replaceAll(' ', '')
+        .replaceAll('_', '');
+  }
+
+  String _escapeCsv(String value) {
+    final mustQuote =
+        value.contains(',') ||
+        value.contains('"') ||
+        value.contains('\n') ||
+        value.contains('\r');
+    if (!mustQuote) return value;
+    return '"${value.replaceAll('"', '""')}"';
+  }
+
+  String _detectDelimiter(String headerLine) {
+    final commaCount = ','.allMatches(headerLine).length;
+    final semicolonCount = ';'.allMatches(headerLine).length;
+    final tabCount = '\t'.allMatches(headerLine).length;
+
+    if (semicolonCount > commaCount && semicolonCount >= tabCount) {
+      return ';';
+    }
+    if (tabCount > commaCount && tabCount > semicolonCount) {
+      return '\t';
+    }
+    return ',';
+  }
+
+  List<String> _parseDelimitedLine(String line, String delimiter) {
+    final values = <String>[];
+    final buffer = StringBuffer();
+    var inQuotes = false;
+
+    for (var i = 0; i < line.length; i++) {
+      final char = line[i];
+      if (char == '"') {
+        if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
+          buffer.write('"');
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char == delimiter && !inQuotes) {
+        values.add(buffer.toString().trim());
+        buffer.clear();
+      } else {
+        buffer.write(char);
+      }
+    }
+    values.add(buffer.toString().trim());
+    return values;
+  }
+
+  double? _tryParsePrice(String input) {
+    final raw = input.trim().toLowerCase();
+    if (raw.isEmpty) return null;
+
+    final isPkr =
+        raw.contains('pkr') ||
+        raw.contains('rs') ||
+        raw.contains('rup') ||
+        raw.contains('₨');
+
+    final isUsd =
+        raw.contains(r'$') ||
+        raw.contains('usd') ||
+        RegExp(r'^s\s*\d').hasMatch(raw) ||
+        RegExp(r'\d\s*s$').hasMatch(raw);
+
+    final decimalCommaMatch = RegExp(r'[-+]?\d[\d.]*,\d+').firstMatch(raw);
+    final standardMatch = RegExp(r'[-+]?\d[\d,]*(?:\.\d+)?').firstMatch(raw);
+
+    String? numberText;
+    if (decimalCommaMatch != null) {
+      numberText = decimalCommaMatch
+          .group(0)
+          ?.replaceAll('.', '')
+          .replaceAll(',', '.');
+    } else if (standardMatch != null) {
+      numberText = standardMatch.group(0)?.replaceAll(',', '');
+    }
+
+    if (numberText == null || numberText.isEmpty) return null;
+    var amount = double.tryParse(numberText);
+    if (amount == null) return null;
+
+    const usdToPkrRate = 278.0;
+    if (isUsd && !isPkr) {
+      amount = amount * usdToPkrRate;
+    }
+
+    return amount;
+  }
+
+  bool _parseAvailability(String value) {
+    final normalized = value.toLowerCase();
+    if (normalized == 'false' ||
+        normalized == '0' ||
+        normalized == 'no' ||
+        normalized == 'unavailable') {
+      return false;
+    }
+    return true;
+  }
+
+  Future<Uint8List?> _pickCsvBytes() async {
+    if (kIsWeb) {
+      final input = html.FileUploadInputElement()
+        ..accept = '.csv'
+        ..multiple = false;
+
+      final completer = Completer<Uint8List?>();
+
+      input.onChange.listen((_) {
+        final file = input.files?.isNotEmpty == true
+            ? input.files!.first
+            : null;
+        if (file == null) {
+          if (!completer.isCompleted) completer.complete(null);
+          return;
+        }
+
+        final reader = html.FileReader();
+        reader.onLoadEnd.listen((_) {
+          final result = reader.result;
+          if (result is ByteBuffer) {
+            if (!completer.isCompleted) {
+              completer.complete(result.asUint8List());
+            }
+            return;
+          }
+          if (result is Uint8List) {
+            if (!completer.isCompleted) completer.complete(result);
+            return;
+          }
+          if (result is String) {
+            if (!completer.isCompleted) {
+              completer.complete(Uint8List.fromList(utf8.encode(result)));
+            }
+            return;
+          }
+          if (!completer.isCompleted) completer.complete(null);
+        });
+        reader.onError.listen((_) {
+          if (!completer.isCompleted) completer.complete(null);
+        });
+        reader.readAsArrayBuffer(file);
+      });
+
+      input.click();
+      return Future.any<Uint8List?>([
+        completer.future,
+        Future<Uint8List?>.delayed(const Duration(seconds: 60), () => null),
+      ]);
+    }
+
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv'],
+      withData: true,
+    );
+
+    if (picked == null || picked.files.isEmpty) return null;
+    return picked.files.single.bytes;
+  }
+
+  Future<void> _exportMenuToExcel(
+    List<ProductModel> products,
+    List<CategoryModel> categories,
+  ) async {
+    try {
+      final categoryNamesById = {for (final c in categories) c.id: c.name};
+
+      final csvRows = <String>[];
+      csvRows.add(
+        'Name,Description,Price,Category,CategoryId,Available,ImageUrl',
+      );
+
+      for (final product in products) {
+        final row = [
+          _escapeCsv(product.name),
+          _escapeCsv(product.description),
+          product.price.toString(),
+          _escapeCsv(categoryNamesById[product.categoryId] ?? ''),
+          _escapeCsv(product.categoryId),
+          product.isAvailable.toString(),
+          _escapeCsv(product.imageUrl ?? ''),
+        ].join(',');
+        csvRows.add(row);
+      }
+
+      final csvContent = csvRows.join('\n');
+      if (csvContent.isEmpty) {
+        throw Exception('CSV generation failed.');
+      }
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = 'menu_export_$timestamp.csv';
+      final data = Uint8List.fromList(utf8.encode(csvContent));
+
+      if (kIsWeb) {
+        final blob = html.Blob([data], 'text/csv;charset=utf-8');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: url)
+          ..setAttribute('download', fileName)
+          ..click();
+        html.Url.revokeObjectUrl(url);
+      } else {
+        final savePath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save CSV file',
+          fileName: fileName,
+          type: FileType.custom,
+          allowedExtensions: const ['csv'],
+          bytes: data,
+        );
+        if (savePath == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Export canceled.')));
+          return;
+        }
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Menu exported: ${products.length} products.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Export failed: $e')));
+    }
+  }
+
+  Future<void> _importMenuFromExcel(List<CategoryModel> categories) async {
+    try {
+      final bytes = await _pickCsvBytes();
+      if (bytes == null || bytes.isEmpty) {
+        throw Exception('Could not read selected file.');
+      }
+
+      final csvText = utf8.decode(bytes, allowMalformed: true);
+      final lines = csvText
+          .split(RegExp(r'\r?\n'))
+          .where((line) => line.trim().isNotEmpty)
+          .toList(growable: false);
+      if (lines.isEmpty) {
+        throw Exception('CSV file is empty.');
+      }
+
+      final delimiter = _detectDelimiter(lines.first);
+      final rows = lines
+          .map((line) => _parseDelimitedLine(line, delimiter))
+          .toList(growable: false);
+
+      final headerRow = rows.first;
+      final headerIndexes = <String, int>{};
+      for (var i = 0; i < headerRow.length; i++) {
+        final header = _normalizeHeader(headerRow[i]);
+        if (header.isNotEmpty) {
+          headerIndexes[header] = i;
+        }
+      }
+
+      int? indexOf(List<String> keys) {
+        for (final key in keys) {
+          final index = headerIndexes[key];
+          if (index != null) return index;
+        }
+        return null;
+      }
+
+      final nameCol = indexOf(['name', 'productname']);
+      final priceCol = indexOf(['price', 'rate', 'amount']);
+      final categoryCol = indexOf(['category', 'categoryname']);
+      final categoryIdCol = indexOf(['categoryid']);
+      final descCol = indexOf(['description', 'desc']);
+      final availableCol = indexOf(['available', 'isavailable', 'status']);
+      final imageCol = indexOf(['imageurl', 'image', 'imagepath']);
+
+      if (nameCol == null ||
+          priceCol == null ||
+          (categoryCol == null && categoryIdCol == null)) {
+        throw Exception(
+          'Required columns: Name, Price, and Category or CategoryId.',
+        );
+      }
+
+      final user = ref.read(userProvider).selectedUser;
+      final effectiveBusinessId = user?.primarybusinessId ?? businessId;
+      final effectiveBranchId = user?.primaryBranchId ?? branchId;
+
+      final categoryIdByName = {
+        for (final c in categories) c.name.trim().toLowerCase(): c.id,
+      };
+      final categoryIds = categories.map((c) => c.id).toSet();
+
+      String cellAt(List<String> row, int? col) {
+        if (col == null || col < 0 || col >= row.length) return '';
+        return row[col].trim();
+      }
+
+      var successCount = 0;
+      var failCount = 0;
+      final failures = <String>[];
+
+      for (var rowIndex = 1; rowIndex < rows.length; rowIndex++) {
+        final row = rows[rowIndex];
+        final name = cellAt(row, nameCol);
+        if (name.isEmpty) continue;
+
+        final priceRaw = cellAt(row, priceCol);
+        final price = _tryParsePrice(priceRaw);
+        if (price == null || price <= 0) {
+          failCount++;
+          if (failures.length < 5) {
+            failures.add('Row ${rowIndex + 1}: invalid price.');
+          }
+          continue;
+        }
+
+        var resolvedCategoryId = '';
+        if (categoryIdCol != null) {
+          final rawCategoryId = cellAt(row, categoryIdCol);
+          if (categoryIds.contains(rawCategoryId)) {
+            resolvedCategoryId = rawCategoryId;
+          }
+        }
+
+        if (resolvedCategoryId.isEmpty && categoryCol != null) {
+          final categoryName = cellAt(row, categoryCol).toLowerCase().trim();
+          resolvedCategoryId = categoryIdByName[categoryName] ?? '';
+        }
+
+        if (resolvedCategoryId.isEmpty) {
+          failCount++;
+          if (failures.length < 5) {
+            failures.add('Row ${rowIndex + 1}: category not found.');
+          }
+          continue;
+        }
+
+        final description = descCol == null ? '' : cellAt(row, descCol);
+        final isAvailable = availableCol == null
+            ? true
+            : _parseAvailability(cellAt(row, availableCol));
+        final imageUrl = imageCol == null ? null : cellAt(row, imageCol);
+
+        final product = ProductModel(
+          productId: const Uuid().v4(),
+          name: name,
+          description: description,
+          price: price,
+          categoryId: resolvedCategoryId,
+          imageUrl: imageUrl == null || imageUrl.isEmpty ? null : imageUrl,
+          isAvailable: isAvailable,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        try {
+          await _productNotifier.createProduct(
+            product,
+            effectiveBusinessId,
+            effectiveBranchId,
+            null,
+            null,
+          );
+          successCount++;
+        } catch (_) {
+          failCount++;
+          if (failures.length < 5) {
+            failures.add('Row ${rowIndex + 1}: failed to save product.');
+          }
+        }
+      }
+
+      await _refreshProducts();
+      if (!mounted) return;
+      final details = failures.isEmpty ? '' : '\n${failures.join('\n')}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 6),
+          content: Text(
+            'Import completed. Added: $successCount, Failed: $failCount.$details',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
+    }
+  }
+
   void _toggleProductAvailability(ProductModel product) {
     _productNotifier.toggleProductAvailability(
       product.productId,
@@ -1092,9 +1548,8 @@ class _ProductManagementScreenState
               imageExtension,
             ) async {
               final user = ref.read(userProvider).selectedUser;
-              if (user == null) {
-                throw Exception('User not found');
-              }
+              final effectiveBusinessId = user?.primarybusinessId ?? businessId;
+              final effectiveBranchId = user?.primaryBranchId ?? branchId;
 
               final product = ProductModel(
                 productId: const Uuid().v4(),
@@ -1108,8 +1563,8 @@ class _ProductManagementScreenState
               );
               await _productNotifier.createProduct(
                 product,
-                user.primarybusinessId,
-                user.primaryBranchId,
+                effectiveBusinessId,
+                effectiveBranchId,
                 imageBytes,
                 imageExtension,
               );
@@ -1146,12 +1601,8 @@ class _ProductManagementScreenState
             ) async {
               // Get user info here where ref is available
               final user = ref.read(userProvider).selectedUser;
-              if (user == null) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text('User not found')));
-                return;
-              }
+              final effectiveBusinessId = user?.primarybusinessId ?? businessId;
+              final effectiveBranchId = user?.primaryBranchId ?? branchId;
 
               // Create updated product
               final updatedProduct = product.copyWith(
@@ -1166,8 +1617,8 @@ class _ProductManagementScreenState
                 product: updatedProduct,
                 imageBytes: imageBytes,
                 imageExtension: imageExtension,
-                businessId: user.primarybusinessId, // Pass user info
-                branchId: user.primaryBranchId,
+                businessId: effectiveBusinessId,
+                branchId: effectiveBranchId,
               );
             },
       ),

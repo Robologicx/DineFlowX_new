@@ -59,9 +59,6 @@ class _LoginFormState extends ConsumerState<AdminLoginForm> {
 
   @override
   Widget build(BuildContext context) {
-    // Pre-fill for testing purposes
-    emailController.text = 'admin@gmail.com';
-    passwordController.text = '';
     return Form(
       key: formKey,
       child: Padding(

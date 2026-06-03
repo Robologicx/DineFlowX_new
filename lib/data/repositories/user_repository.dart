@@ -1,4 +1,8 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
+import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
 import '../models/user_model.dart';
 
 class UserRepository {
@@ -20,65 +24,187 @@ class UserRepository {
         .collection('users');
   }
 
+  List<UserModel> _mergeUsersPreferLocal({
+    required List<UserModel> local,
+    required List<UserModel> remote,
+  }) {
+    final merged = <String, UserModel>{};
+    for (final user in remote) {
+      merged[user.uid] = user;
+    }
+    for (final user in local) {
+      merged[user.uid] = user;
+    }
+    return merged.values.toList(growable: false);
+  }
+
+  Stream<UserModel?> _hybridUserStream(String uid) {
+    return Stream.multi((controller) {
+      UserModel? latestRemote;
+      StreamSubscription<DocumentSnapshot<Object?>>? remoteSub;
+      Timer? localTick;
+      bool isCancelled = false;
+
+      Future<void> emitMerged() async {
+        if (isCancelled) return;
+        final localDoc = await OfflineLocalReadService.instance
+            .getGlobalDocument(collectionName: 'users', documentId: uid);
+        if (isCancelled) return;
+
+        if (localDoc != null) {
+          controller.add(UserModel.fromMap(uid, localDoc));
+        } else {
+          controller.add(latestRemote);
+        }
+      }
+
+      localTick = Timer.periodic(const Duration(seconds: 2), (_) {
+        unawaited(emitMerged());
+      });
+
+      remoteSub = _usersCollection
+          .doc(uid)
+          .snapshots()
+          .listen(
+            (doc) {
+              if (doc.exists && doc.data() != null) {
+                latestRemote = UserModel.fromMap(
+                  uid,
+                  doc.data()! as Map<String, dynamic>,
+                );
+              } else {
+                latestRemote = null;
+              }
+              unawaited(emitMerged());
+            },
+            onError: (_) {
+              // Keep local polling active if remote listener fails.
+            },
+          );
+
+      unawaited(emitMerged());
+
+      controller.onCancel = () {
+        isCancelled = true;
+        localTick?.cancel();
+        remoteSub?.cancel();
+      };
+    });
+  }
+
   /// Create a new user document
   Future<void> createUser(UserModel user) async {
-    await _usersCollection.doc(user.uid).set(user.toMap());
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath: 'users/${user.uid}',
+      data: user.toMap(),
+      merge: false,
+    );
   }
 
   /// Get a user by ID
   Future<UserModel?> getUserById(String uid) async {
     try {
+      final localDoc = await OfflineLocalReadService.instance.getGlobalDocument(
+        collectionName: 'users',
+        documentId: uid,
+      );
+      if (localDoc != null) {
+        return UserModel.fromMap(uid, localDoc);
+      }
+
       final doc = await _usersCollection.doc(uid).get();
       if (doc.exists) {
         return UserModel.fromMap(doc.id, doc.data()! as Map<String, dynamic>);
       }
       return null;
     } catch (e) {
-      print('Error getting user: $e');
       return null;
     }
+  }
+
+  Future<UserModel?> getUserByIdForBusiness({
+    required String uid,
+    required String businessId,
+  }) async {
+    final user = await getUserById(uid);
+    if (user == null) return null;
+    if (user.primarybusinessId != businessId) return null;
+    return user;
   }
 
   // Get user role from nested collection
 
   // OLD CODE TO GET SINGLE USER
   Future<UserModel?> getSingleUser(String uid) async {
-    final doc = await _usersCollection.doc(uid).get();
-    if (!doc.exists) return null;
-    return UserModel.fromMap(doc.id, doc.data()! as Map<String, dynamic>);
+    return getUserById(uid);
   }
 
   /// Update an existing user
   Future<void> updateUser(UserModel user) async {
-    await _usersCollection.doc(user.uid).update(user.toMap());
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath: 'users/${user.uid}',
+      data: user.toMap(),
+      merge: true,
+    );
   }
 
   /// Delete a user
   Future<void> deleteUser(String uid) async {
-    await _usersCollection.doc(uid).delete();
+    await OfflineFirestoreWriteQueueService.instance.deleteOrQueue(
+      documentPath: 'users/$uid',
+    );
   }
 
   /// Listen to a specific user's changes
   Stream<UserModel?> listenToUser(String uid) {
-    return _usersCollection.doc(uid).snapshots().map((doc) {
-      if (!doc.exists) return null;
-      return UserModel.fromMap(doc.id, doc.data()! as Map<String, dynamic>);
-    });
+    return _hybridUserStream(uid);
   }
 
   /// Get all users (optional, for admin use)
   Future<List<UserModel>> getAllUsers() async {
-    final querySnapshot = await _usersCollection.get();
-    return querySnapshot.docs
+    final localRows = await OfflineLocalReadService.instance
+        .getGlobalCollection(collectionName: 'users');
+    final local = localRows
         .map(
           (doc) =>
-              UserModel.fromMap(doc.id, doc.data() as Map<String, dynamic>),
+              UserModel.fromMap((doc['__documentId'] ?? '').toString(), doc),
         )
-        .toList();
+        .toList(growable: false);
+
+    try {
+      final querySnapshot = await _usersCollection.get();
+      final remote = querySnapshot.docs
+          .map(
+            (doc) =>
+                UserModel.fromMap(doc.id, doc.data() as Map<String, dynamic>),
+          )
+          .toList(growable: false);
+      return _mergeUsersPreferLocal(local: local, remote: remote);
+    } catch (_) {
+      return local;
+    }
+  }
+
+  Future<List<UserModel>> getAllUsersForBusiness(String businessId) async {
+    final users = await getAllUsers();
+    return users
+        .where((u) => u.primarybusinessId == businessId)
+        .toList(growable: false);
   }
 
   Future<List<UserModel>> getUsersByIds(List<String> userIds) async {
     if (userIds.isEmpty) return [];
+
+    final localRows = await OfflineLocalReadService.instance
+        .getGlobalCollection(collectionName: 'users');
+    final target = userIds.toSet();
+    final local = localRows
+        .where((row) => target.contains((row['__documentId'] ?? '').toString()))
+        .map(
+          (row) =>
+              UserModel.fromMap((row['__documentId'] ?? '').toString(), row),
+        )
+        .toList(growable: false);
 
     final users = <UserModel>[];
     const chunkSize = 30; // Firestore's whereIn limit
@@ -101,11 +227,11 @@ class UserRepository {
           ),
         );
       } catch (e) {
-        print('Error fetching chunk: $e');
+        continue;
       }
     }
 
-    return users;
+    return _mergeUsersPreferLocal(local: local, remote: users);
   }
 
   // Future<UserModel?> getBranchSpecificUsersInfo({
@@ -145,25 +271,27 @@ class UserRepository {
 
       if (uid == null || uid.isEmpty) {
         // Create new user at root level
-        final newUserRef = _usersCollection.doc();
-        userId = newUserRef.id;
-
-        await newUserRef.set({
-          'uid': userId,
-          'email': email ?? '',
-          'name': name ?? '',
-          'phoneNumber': phoneNumber,
-          'profileImageUrl': null,
-          'primarybusinessId': businessId,
-          'primaryBranchId': branchId,
-          'isStaffMember': true,
-          'favoriteProductIds': [],
-          'userLocationText': null,
-          'userLatlng': null,
-          'deliveryAddresses': [],
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        userId = _usersCollection.doc().id;
+        await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+          documentPath: 'users/$userId',
+          data: {
+            'uid': userId,
+            'email': email ?? '',
+            'name': name ?? '',
+            'phoneNumber': phoneNumber,
+            'profileImageUrl': null,
+            'primarybusinessId': businessId,
+            'primaryBranchId': branchId,
+            'isStaffMember': true,
+            'favoriteProductIds': [],
+            'userLocationText': null,
+            'userLatlng': null,
+            'deliveryAddresses': [],
+            'createdAt': DateTime.now().toIso8601String(),
+            'updatedAt': DateTime.now().toIso8601String(),
+          },
+          merge: false,
+        );
       } else {
         // Update existing user
         userId = uid;
@@ -172,7 +300,7 @@ class UserRepository {
           'primarybusinessId': businessId,
           'primaryBranchId': branchId,
           'isStaffMember': true,
-          'updatedAt': FieldValue.serverTimestamp(),
+          'updatedAt': DateTime.now().toIso8601String(),
         };
 
         // Add optional fields if provided
@@ -181,21 +309,30 @@ class UserRepository {
           updateData['phoneNumber'] = phoneNumber;
         }
 
-        await _usersCollection.doc(uid).update(updateData);
+        await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+          documentPath: 'users/$uid',
+          data: updateData,
+          merge: true,
+        );
       }
 
       // Set/Update branch-specific user info
-      await _specificBranchUsersRef(businessId, branchId).doc(userId).set({
+      final branchPayload = {
         'uid': userId,
         'roleId': roleId,
         'extraPermissions': extraPermissions,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+        'createdAt': DateTime.now().toIso8601String(),
+        'updatedAt': DateTime.now().toIso8601String(),
+      };
+
+      await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+        documentPath: 'businesses/$businessId/branches/$branchId/users/$userId',
+        data: branchPayload,
+        merge: true,
+      );
 
       return userId;
     } catch (e) {
-      print('Error setting branch specific user info: $e');
       rethrow;
     }
   }
@@ -207,6 +344,18 @@ class UserRepository {
     required String uid,
   }) async {
     try {
+      if (businessId.trim().isEmpty || branchId.trim().isEmpty) {
+        return null;
+      }
+
+      final localDoc = await OfflineLocalReadService.instance.getBranchDocument(
+        businessId: businessId,
+        branchId: branchId,
+        collectionName: 'users',
+        documentId: uid,
+      );
+      if (localDoc != null) return localDoc;
+
       //--------------------------THIS ONLY GIVES ROLE AND PERMISSIONS OF USER NOT OTHER DETAILS-----------
       //------------FOR OTHER DETAILS USE GET USER BY ID WHICH WILL RETURN USER OBJECT FROM USER REPOSITORY---------------//
       final doc = await _specificBranchUsersRef(
@@ -219,7 +368,6 @@ class UserRepository {
       }
       return null;
     } catch (e) {
-      print('Error getting branch specific user info: $e');
       return null;
     }
   }
@@ -229,18 +377,64 @@ class UserRepository {
     required String businessId,
     required String branchId,
   }) {
-    try {
-      return _specificBranchUsersRef(businessId, branchId).snapshots().map(
-        (snapshot) => snapshot.docs
-            .map(
-              (doc) => {...doc.data() as Map<String, dynamic>, 'uid': doc.id},
-            )
-            .toList(),
-      );
-    } catch (e) {
-      print('Error getting branch specific users stream: $e');
-      return Stream.value([]);
-    }
+    return Stream.multi((controller) {
+      List<Map<String, dynamic>> latestRemote = const [];
+      StreamSubscription<QuerySnapshot<Object?>>? remoteSub;
+      Timer? localTick;
+      bool isCancelled = false;
+
+      Future<void> emitMerged() async {
+        if (isCancelled) return;
+        final local = await OfflineLocalReadService.instance
+            .getBranchCollection(
+              businessId: businessId,
+              branchId: branchId,
+              collectionName: 'users',
+            );
+        if (isCancelled) return;
+
+        final merged = <String, Map<String, dynamic>>{};
+        for (final row in latestRemote) {
+          merged[(row['uid'] ?? '').toString()] = row;
+        }
+        for (final row in local) {
+          final uid = (row['__documentId'] ?? '').toString();
+          merged[uid] = {...row, 'uid': uid};
+        }
+        controller.add(merged.values.toList(growable: false));
+      }
+
+      localTick = Timer.periodic(const Duration(seconds: 2), (_) {
+        unawaited(emitMerged());
+      });
+
+      remoteSub = _specificBranchUsersRef(businessId, branchId)
+          .snapshots()
+          .listen(
+            (snapshot) {
+              latestRemote = snapshot.docs
+                  .map(
+                    (doc) => {
+                      ...doc.data() as Map<String, dynamic>,
+                      'uid': doc.id,
+                    },
+                  )
+                  .toList(growable: false);
+              unawaited(emitMerged());
+            },
+            onError: (_) {
+              // Keep local polling alive if remote listener fails.
+            },
+          );
+
+      unawaited(emitMerged());
+
+      controller.onCancel = () {
+        isCancelled = true;
+        localTick?.cancel();
+        remoteSub?.cancel();
+      };
+    });
   }
 
   /// Get all branch-specific users info (Future for one-time fetch)
@@ -249,16 +443,34 @@ class UserRepository {
     required String branchId,
   }) async {
     try {
+      final localRows = await OfflineLocalReadService.instance
+          .getBranchCollection(
+            businessId: businessId,
+            branchId: branchId,
+            collectionName: 'users',
+          );
+      final local = localRows
+          .map((doc) => {...doc, 'uid': (doc['__documentId'] ?? '').toString()})
+          .toList(growable: false);
+
       final snapshot = await _specificBranchUsersRef(
         businessId,
         branchId,
       ).get();
 
-      return snapshot.docs
+      final remote = snapshot.docs
           .map((doc) => {...doc.data() as Map<String, dynamic>, 'uid': doc.id})
-          .toList();
+          .toList(growable: false);
+
+      final merged = <String, Map<String, dynamic>>{};
+      for (final item in remote) {
+        merged[(item['uid'] ?? '').toString()] = item;
+      }
+      for (final item in local) {
+        merged[(item['uid'] ?? '').toString()] = item;
+      }
+      return merged.values.toList(growable: false);
     } catch (e) {
-      print('Error getting branch specific users: $e');
       return [];
     }
   }
@@ -280,38 +492,9 @@ class UserRepository {
       // Extract all UIDs
       final userIds = branchUsers.map((u) => u['uid'] as String).toList();
 
-      // Fetch root user data in batches (Firestore 'in' query limit is 10)
-      final List<UserModel> users = [];
-
-      for (int i = 0; i < userIds.length; i += 10) {
-        final batch = userIds.skip(i).take(10).toList();
-        final querySnapshot = await _usersCollection
-            .where(FieldPath.documentId, whereIn: batch)
-            .get();
-
-        for (final doc in querySnapshot.docs) {
-          if (doc.exists) {
-            final userData = doc.data() as Map<String, dynamic>;
-
-            // Find corresponding branch-specific data
-            final branchData = branchUsers.firstWhere(
-              (u) => u['uid'] == doc.id,
-              orElse: () => {},
-            );
-
-            // Create basic UserModel from root data
-            final user = UserModel.fromMap(doc.id, userData);
-
-            // Note: Role and permissions will be merged in the service layer
-            // Store branch-specific data temporarily in the model if needed
-            users.add(user);
-          }
-        }
-      }
-
-      return users;
+      // Root users are loaded local-first by getUsersByIds.
+      return getUsersByIds(userIds);
     } catch (e) {
-      print('Error getting all users of branch: $e');
       return [];
     }
   }
@@ -321,14 +504,10 @@ class UserRepository {
     required String branchId,
     required String businessId,
   }) {
-    try {
-      return _specificBranchUsersRef(businessId, branchId).snapshots().map(
-        (snapshot) => snapshot.docs.map((doc) => doc.id).toList(),
-      );
-    } catch (e) {
-      print('Error getting users stream: $e');
-      return Stream.value([]);
-    }
+    return getBranchSpecificAllUsersInfoStream(
+      businessId: businessId,
+      branchId: branchId,
+    ).map((users) => users.map((e) => (e['uid'] ?? '').toString()).toList());
   }
 
   /// Delete branch-specific user
@@ -339,31 +518,25 @@ class UserRepository {
     bool deleteRootUser = false, // Optional: delete from root users collection
   }) async {
     try {
-      final batch = FirebaseFirestore.instance.batch();
+      await OfflineFirestoreWriteQueueService.instance.deleteOrQueue(
+        documentPath: 'businesses/$businessId/branches/$branchId/users/$uid',
+      );
 
-      // Delete from branch-specific collection
-      final branchUserRef = _specificBranchUsersRef(
-        businessId,
-        branchId,
-      ).doc(uid);
-      batch.delete(branchUserRef);
-
-      // Optional: Delete from root users collection
       if (deleteRootUser) {
-        final rootUserRef = _usersCollection.doc(uid);
-        batch.delete(rootUserRef);
+        await OfflineFirestoreWriteQueueService.instance.deleteOrQueue(
+          documentPath: 'users/$uid',
+        );
       } else {
-        // Just update to mark as no longer staff member
-        final rootUserRef = _usersCollection.doc(uid);
-        batch.update(rootUserRef, {
-          'isStaffMember': false,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+          documentPath: 'users/$uid',
+          data: {
+            'isStaffMember': false,
+            'updatedAt': DateTime.now().toIso8601String(),
+          },
+          merge: true,
+        );
       }
-
-      await batch.commit();
     } catch (e) {
-      print('Error deleting branch specific user: $e');
       rethrow;
     }
   }
@@ -376,12 +549,12 @@ class UserRepository {
     required String branchId,
   }) async {
     try {
-      await _specificBranchUsersRef(businessId, branchId).doc(uid).update({
-        'roleId': roleId,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+        documentPath: 'businesses/$businessId/branches/$branchId/users/$uid',
+        data: {'roleId': roleId, 'updatedAt': DateTime.now().toIso8601String()},
+        merge: true,
+      );
     } catch (e) {
-      print('Error updating user role: $e');
       rethrow;
     }
   }
@@ -394,12 +567,15 @@ class UserRepository {
     required String branchId,
   }) async {
     try {
-      await _specificBranchUsersRef(businessId, branchId).doc(uid).update({
-        'extraPermissions': extraPermissions,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+        documentPath: 'businesses/$businessId/branches/$branchId/users/$uid',
+        data: {
+          'extraPermissions': extraPermissions,
+          'updatedAt': DateTime.now().toIso8601String(),
+        },
+        merge: true,
+      );
     } catch (e) {
-      print('Error updating user extra permissions: $e');
       rethrow;
     }
   }

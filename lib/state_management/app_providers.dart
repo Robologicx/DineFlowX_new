@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/room_model.dart';
@@ -43,6 +44,69 @@ import 'package:hotel_management_system/state_management/role_state_and_provider
 import 'package:hotel_management_system/state_management/room_state_and_notifier.dart';
 import 'package:hotel_management_system/state_management/table_state_and_notifier.dart';
 import 'package:hotel_management_system/state_management/user_state_and_notifier.dart';
+
+class TenantBusinessAccessState {
+  const TenantBusinessAccessState({
+    required this.isBlocked,
+    required this.reason,
+    required this.businessId,
+  });
+
+  final bool isBlocked;
+  final String reason;
+  final String businessId;
+}
+
+final tenantBusinessAccessProvider = StreamProvider<TenantBusinessAccessState>((
+  ref,
+) {
+  final businessId = ref.watch(
+    userProvider.select(
+      (state) => state.selectedUser?.primarybusinessId.trim() ?? '',
+    ),
+  );
+
+  if (businessId.isEmpty) {
+    return Stream.value(
+      const TenantBusinessAccessState(
+        isBlocked: false,
+        reason: '',
+        businessId: '',
+      ),
+    );
+  }
+
+  return FirebaseFirestore.instance
+      .collection('businesses')
+      .doc(businessId)
+      .snapshots()
+      .map((doc) {
+        final data = doc.data() ?? const <String, dynamic>{};
+        final status = (data['status'] ?? 'active').toString().toLowerCase();
+        final isActiveField = data['isActive'];
+        final isDeleted = data['isDeleted'] == true || status == 'deleted';
+        final isSuspended =
+            status == 'suspended' ||
+            status == 'disabled' ||
+            isActiveField == false;
+
+        final isBlocked = isDeleted || isSuspended;
+        final reason = isBlocked
+            ? 'Your business account is disabled. Please contact DineFlowX team.'
+            : '';
+
+        return TenantBusinessAccessState(
+          isBlocked: isBlocked,
+          reason: reason,
+          businessId: businessId,
+        );
+      })
+      .distinct((previous, next) {
+        return previous.isBlocked == next.isBlocked &&
+            previous.reason == next.reason &&
+            previous.businessId == next.businessId;
+      });
+});
 
 /// --------------------
 /// Core Providers
@@ -100,13 +164,30 @@ final _userServiceProvider = FutureProvider<UserService>((ref) async {
 // Public notifier provider using same family parameters
 final userProvider = StateNotifierProvider<UserNotifier, UserState>((ref) {
   final service = ref.read(_userServiceProvider);
-  return service.when(
+  final notifier = service.when(
     loading: () => UserNotifier(_createStubService()), // Handle loading state
     error: (error, stack) =>
         UserNotifier(_createErrorService(error)), // Handle error
     data: (userService) =>
         UserNotifier(userService), // Use actual service when ready
   );
+
+  ref.listen<AuthState>(authNotifierProvider, (previous, next) {
+    final previousUid = previous?.firebaseUser?.uid;
+    final nextUid = next.firebaseUser?.uid;
+
+    if (nextUid == null || nextUid.isEmpty) {
+      notifier.clearCurrentUser();
+      return;
+    }
+
+    if (previousUid != nextUid || previous == null) {
+      notifier.loadUser(nextUid);
+      notifier.listenToUser(nextUid);
+    }
+  }, fireImmediately: true);
+
+  return notifier;
 });
 
 // Helper methods for loading/error states

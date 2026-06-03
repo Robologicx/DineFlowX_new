@@ -17,15 +17,21 @@ import 'package:hotel_management_system/presentation/admin_screens/sales_dashboa
 import 'package:hotel_management_system/presentation/admin_screens/staff_management_screen/role_management_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/staff_management_screen/permissions_management_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/staff_management_screen/staff_management_screen.dart';
+import 'package:hotel_management_system/presentation/client_screens/cart/add_to_cart.dart';
+import 'package:hotel_management_system/presentation/client_screens/home/client_shell.dart';
 import 'package:hotel_management_system/presentation/client_screens/onboarding/spash_screen_adminside.dart';
+import 'package:hotel_management_system/features/super_admin/presentation/super_admin_dashboard_screen.dart';
+import 'package:hotel_management_system/presentation/auth/portal_selector_screen.dart';
 
 class AdminAppRoutes {
   static const String splash = '/splash-screen';
+  static const String portalSelector = '/portal-selector';
   static const String home = '/home';
   static const String login = '/login';
   static const String register = '/register';
   static const String userProfile = '/user-profile';
   static const String printer = '/printer';
+  static const String superAdmin = '/super-admin';
 
   // Dashboard Screen
   static const String dashboard = '/dashboard';
@@ -37,6 +43,8 @@ class AdminAppRoutes {
   static const String roomsManagement = '/rooms-management';
   static const String tablesManagement = '/tables-management';
   static const String qrCodeManagement = '/qr-code-management';
+  static const String clientShell = '/clientShell';
+  static const String clientCart = '/addToCartScreen';
 
   // Staff Management Screens
   static const String staffManagement = '/staff-management';
@@ -52,7 +60,9 @@ class AdminAppRoutes {
   static const String productManagement = '/product-management';
 
   static Map<String, WidgetBuilder> routes = {
+    '/': (context) => const PortalSelectorScreen(),
     splash: (context) => SplashScreen(),
+    portalSelector: (context) => const PortalSelectorScreen(),
     home: (context) => AdminShellWrapper(),
     login: (context) => const AdminLoginScreen(),
     userProfile: (context) => const UserProfileScreen(),
@@ -64,11 +74,28 @@ class AdminAppRoutes {
     roomsManagement: (context) => const RoomsManagementScreen(),
     tablesManagement: (context) => const TablesManagementScreen(),
     qrCodeManagement: (context) => QRCodeGenerationScreen(),
+    clientShell: (context) {
+      final query = Uri.base.queryParameters;
+      return ClientHomeShell(
+        tableId: query['tableId'],
+        businessId: query['businessId'],
+        branchId: query['branchId'],
+      );
+    },
+    clientCart: (context) {
+      final query = Uri.base.queryParameters;
+      return AddToCartScreen(
+        businessId: query['businessId'] ?? '',
+        branchId: query['branchId'] ?? '',
+        tableId: query['tableId'],
+      );
+    },
     printer: (context) => PrinterScreen(),
     menuManagement: (context) => const MenuManagementScreen(),
     categoryManagement: (context) => const CategoryManagementScreen(),
     productManagement: (context) => ProductManagementScreen(),
     ordersManagement: (context) => const OrderManagementScreen(),
+    superAdmin: (context) => const SuperAdminDashboardScreen(),
 
     // I want to use provider to manage hotel id and service
     permissionsManagement: (context) => const PermissionsScreen(),

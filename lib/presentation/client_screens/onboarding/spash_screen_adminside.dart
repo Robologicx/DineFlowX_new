@@ -151,7 +151,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         _navigateTo(AdminAppRoutes.home);
         break;
       case AppInitializationState.error:
-        _navigateTo(AdminAppRoutes.login);
         // Show error in the same screen, don't navigate
         break;
       default:
@@ -195,7 +194,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             const SizedBox(height: 20),
 
             Text(
-              'dineflowx',
+              'DineFlowX',
               style: Theme.of(
                 context,
               ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
@@ -236,6 +235,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   Widget _buildErrorState() {
     final initializationAsync = ref.watch(appInitializationProvider);
+    final initError = ref.watch(appInitializationErrorProvider);
 
     return Column(
       children: [
@@ -260,7 +260,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 40),
           child: Text(
-            initializationAsync.error?.toString() ??
+            initError ??
+                initializationAsync.error?.toString() ??
                 'Check your internet connection',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium,

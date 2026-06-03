@@ -34,6 +34,9 @@ class ThermalPrinterService {
   }) async {
     Socket? socket;
     final printerIp = await getPrimaryPrinterIP();
+    final business = await BusinessRepository().getBusinessById(
+      BusinessRepository.temporaryBusinesshId,
+    );
 
     if (printerIp == null || printerIp.isEmpty) {
       throw Exception('Printer not connected.');
@@ -43,6 +46,8 @@ class ThermalPrinterService {
       final bytes = await ThermalReceiptBuilder.generateReceiptBytes(
         order,
         type: type,
+        businessName: business?.title,
+        businessLogoUrl: business?.logoUrl,
       );
 
       // 2️⃣ Connect to printer

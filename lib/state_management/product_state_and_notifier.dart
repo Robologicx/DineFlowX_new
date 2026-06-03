@@ -1,9 +1,10 @@
+import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/services/image_storage_service.dart';
 import 'package:hotel_management_system/data/services/product_service.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
+import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 import 'package:riverpod/riverpod.dart';
 import 'package:hotel_management_system/data/models/product_model.dart';
 import 'package:hotel_management_system/data/repositories/product_repository.dart';
@@ -11,9 +12,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 // Repository Provider
 final productRepositoryProvider = Provider<ProductRepository>((ref) {
+  final tenantContext = ref.watch(tenantContextProvider);
   return ProductRepository(
-    businessId: BusinessRepository.temporaryBusinesshId,
-    branchId: BusinessRepository.temporaryBranchId,
+    businessId: tenantContext.businessId,
+    branchId: tenantContext.branchId,
   );
 });
 
@@ -160,7 +162,12 @@ class ProductNotifier extends StateNotifier<ProductState> {
         imageBytes,
         fileExtension,
       );
-      await loadAllProducts();
+      final updatedProducts = [
+        savedProduct,
+        ...state.products.where((p) => p.productId != savedProduct.productId),
+      ];
+      state = state.copyWith(products: updatedProducts, error: null);
+      unawaited(loadAllProducts());
       return savedProduct;
     } catch (e) {
       state = state.copyWith(error: e.toString());

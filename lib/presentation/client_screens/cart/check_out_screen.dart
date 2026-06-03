@@ -2,12 +2,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hotel_management_system/core/utils/offline_order_queue_service.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_button.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_text_field.dart';
 import 'package:hotel_management_system/routes/client_app_routes.dart';
 import 'package:hotel_management_system/state_management/client_cart_state_and_notifier.dart';
 import 'package:hotel_management_system/state_management/order_state_and_notifier.dart';
+import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 import 'package:uuid/uuid.dart';
 
 class CheckOutScreen extends ConsumerStatefulWidget {
@@ -198,9 +200,24 @@ class _CheckOutScreenState extends ConsumerState<CheckOutScreen> {
                                   );
 
                                   // Wait for the order to be created
-                                  await ref
-                                      .read(orderNotifierProvider)
-                                      .createOrder(order);
+                                  final hasInternet =
+                                      await OfflineOrderQueueService.instance
+                                          .hasInternetConnection();
+                                  if (hasInternet) {
+                                    await ref
+                                        .read(orderNotifierProvider)
+                                        .createOrder(order);
+                                  } else {
+                                    final tenantContext = ref.read(
+                                      tenantContextProvider,
+                                    );
+                                    await OfflineOrderQueueService.instance
+                                        .enqueueOrder(
+                                          businessId: tenantContext.businessId,
+                                          branchId: tenantContext.branchId,
+                                          order: order,
+                                        );
+                                  }
 
                                   // Clear the cart after successful order
                                   ref.read(cartProvider.notifier).clearCart();
@@ -333,7 +350,7 @@ class _CheckOutScreenState extends ConsumerState<CheckOutScreen> {
     showDialog(
       context: context,
       barrierDismissible: false, // Prevent dismissing by tapping outside
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           content: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -358,7 +375,8 @@ class _CheckOutScreenState extends ConsumerState<CheckOutScreen> {
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () {
-                      Navigator.of(context).pop(); // Close dialog
+                      Navigator.of(dialogContext).pop(); // Close dialog
+                      if (!mounted) return;
                       context.goNamed(
                         ClientAppRoutes.shell,
                       ); // Navigate to home

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:hotel_management_system/data/services/user_service.dart';
 
 import '../data/models/user_model.dart';
@@ -17,14 +19,18 @@ class UserState {
     this.error,
   });
 
+  static const Object _noValue = Object();
+
   UserState copyWith({
-    UserModel? selectedUser,
+    Object? selectedUser = _noValue,
     List<UserModel>? users,
     bool? isLoading,
     String? error,
   }) {
     return UserState(
-      selectedUser: selectedUser ?? this.selectedUser,
+      selectedUser: identical(selectedUser, _noValue)
+          ? this.selectedUser
+          : selectedUser as UserModel?,
       users: users ?? this.users,
       isLoading: isLoading ?? this.isLoading,
       error: error,
@@ -36,11 +42,36 @@ class UserState {
 
 class UserNotifier extends StateNotifier<UserState> {
   final UserService _service;
+  StreamSubscription<UserModel?>? _userSubscription;
 
   UserNotifier(this._service) : super(const UserState());
 
+  bool _isSameUserSnapshot(UserModel? a, UserModel? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null) return a == b;
+
+    return a.uid == b.uid &&
+        a.name == b.name &&
+        a.email == b.email &&
+        a.phoneNumber == b.phoneNumber &&
+        a.profileImageUrl == b.profileImageUrl &&
+        a.primarybusinessId == b.primarybusinessId &&
+        a.primaryBranchId == b.primaryBranchId &&
+        a.role.id == b.role.id &&
+        a.role.name == b.role.name;
+  }
+
   void setUser(UserModel user) {
     state = state.copyWith(selectedUser: user, isLoading: false, error: null);
+  }
+
+  void clearCurrentUser() {
+    state = state.copyWith(
+      selectedUser: null,
+      users: const [],
+      isLoading: false,
+      error: null,
+    );
   }
 
   Future<void> loadAllUsers() async {
@@ -72,13 +103,27 @@ class UserNotifier extends StateNotifier<UserState> {
     }
   }
 
-  bool hasPermissionOfCurrentUser(String permission) {
+  bool hasPermissionOfCurrentUser(String permission, {String? businessId}) {
     final selectedUser = state.selectedUser;
     if (selectedUser == null) {
       return false;
     }
 
-    final roleName = selectedUser.role.name.toLowerCase();
+    if (businessId != null && selectedUser.primarybusinessId != businessId) {
+      return false;
+    }
+
+    final roleName = selectedUser.role.name.trim().toLowerCase();
+    final hasTenantContext =
+        selectedUser.primarybusinessId.trim().isNotEmpty &&
+        selectedUser.primaryBranchId.trim().isNotEmpty;
+
+    // Legacy compatibility: some existing tenant users may not have role metadata
+    // hydrated yet after introducing the super-admin layer. Keep business flow usable.
+    if (roleName.isEmpty && (selectedUser.isStaffMember || hasTenantContext)) {
+      return true;
+    }
+
     if (roleName == 'admin' || roleName == 'owner') {
       return true;
     }
@@ -114,9 +159,19 @@ class UserNotifier extends StateNotifier<UserState> {
 
   /// Stream updates to keep UI synced in real-time
   void listenToUser(String uid) {
-    _service.listenToUser(uid).listen((user) {
+    _userSubscription?.cancel();
+    _userSubscription = _service.listenToUser(uid).listen((user) {
+      if (_isSameUserSnapshot(state.selectedUser, user)) {
+        return;
+      }
       state = state.copyWith(selectedUser: user);
     });
+  }
+
+  @override
+  void dispose() {
+    _userSubscription?.cancel();
+    super.dispose();
   }
 
   /// ============================================================================

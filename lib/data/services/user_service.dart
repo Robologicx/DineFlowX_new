@@ -39,11 +39,19 @@ class UserService {
 
     UserModel? user = await _userRepository.getUserById(uid);
     if (user != null) {
-      final userDetails = await _userRepository.getBranchSpecificUsersInfo(
-        businessId: user.primarybusinessId,
-        branchId: user.primaryBranchId,
-        uid: uid,
-      );
+      Map<String, dynamic>? userDetails;
+      final hasBusinessContext =
+          user.primarybusinessId.trim().isNotEmpty &&
+          user.primaryBranchId.trim().isNotEmpty;
+
+      if (hasBusinessContext) {
+        userDetails = await _userRepository.getBranchSpecificUsersInfo(
+          businessId: user.primarybusinessId,
+          branchId: user.primaryBranchId,
+          uid: uid,
+        );
+      }
+
       if (userDetails != null) {
         //-------------------------------Merge branch specific details into user model----------------------------------//
         Timestamp timestamp =
@@ -78,10 +86,15 @@ class UserService {
               }).toList()
             : <PermissionModel>[];
 
+        final roleId = (userDetails['roleId'] ?? '').toString();
+        final roleName =
+            (userDetails['roleName'] ?? userDetails['name'] ?? roleId)
+                .toString();
+
         RoleModel role = RoleModel(
-          id: userDetails['roleId'],
+          id: roleId,
           businessId: user.primarybusinessId,
-          name: userDetails['name'] ?? '',
+          name: roleName,
           permissions: parsedPermissions,
           createdAt: createdAt,
           updatedAt: updatedAt,
@@ -94,6 +107,15 @@ class UserService {
             {};
         user = user.copyWith(role: role, extraPermissions: stringPermissions);
       }
+      if (!hasBusinessContext) {
+        return user;
+      }
+
+      final roleId = user.role.id.trim();
+      if (roleId.isEmpty) {
+        return user;
+      }
+
       final roleRepository = _roleRepoFactory(
         user.primaryBranchId,
         user.primarybusinessId,
@@ -105,7 +127,7 @@ class UserService {
       );
 
       // Now role model is complete with permissions.
-      RoleModel? role = await roleRepository.getRoleById(user.role.id);
+      RoleModel? role = await roleRepository.getRoleById(roleId);
       if (role != null) {
         role = role.copyWith(
           permissions: await permissionRepository.getPermissionsByIds(
@@ -140,6 +162,16 @@ class UserService {
     }
   }
 
+  Future<UserModel?> getUserForBusiness({
+    required String uid,
+    required String businessId,
+  }) async {
+    return _userRepository.getUserByIdForBusiness(
+      uid: uid,
+      businessId: businessId,
+    );
+  }
+
   /// Update user data
   Future<void> updateUser(UserModel user) async {
     await _userRepository.updateUser(user);
@@ -158,6 +190,10 @@ class UserService {
   /// Admin-only: Get all users
   Future<List<UserModel>> getAllUsers() async {
     return await _userRepository.getAllUsers();
+  }
+
+  Future<List<UserModel>> getAllUsersForBusiness(String businessId) async {
+    return _userRepository.getAllUsersForBusiness(businessId);
   }
 
   //------------------------------Functions relevant to staff user management----------------------------------//

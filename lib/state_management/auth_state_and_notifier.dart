@@ -25,10 +25,13 @@ class AuthState {
 class AuthNotifier extends StateNotifier<AuthState> {
   final Ref ref;
   final AuthService _service;
+  StreamSubscription<User?>? _authSubscription;
 
   AuthNotifier(this.ref, this._service) : super(const AuthState()) {
-    // Initialize with current user on app start
     _initializeUser();
+    _authSubscription = _service.authStateChanges.listen((user) {
+      state = AuthState(firebaseUser: user, isLoading: false, error: null);
+    });
   }
 
   Future<void> _initializeUser() async {
@@ -36,6 +39,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     if (currentUser != null) {
       state = state.copyWith(firebaseUser: currentUser);
     }
+  }
+
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> signIn(

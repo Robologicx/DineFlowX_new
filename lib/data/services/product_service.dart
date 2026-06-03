@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:hotel_management_system/core/utils/offline_media_upload_queue_service.dart';
 import 'package:hotel_management_system/data/services/image_storage_service.dart';
 
 import '../repositories/product_repository.dart';
@@ -13,6 +15,8 @@ class ProductService {
     required StorageService storageService,
   }) : _repository = repository,
        _storageService = storageService;
+  static const Duration _quickQueryTimeout = Duration(seconds: 2);
+  static const Duration _quickUploadTimeout = Duration(seconds: 4);
   // By making this parameterized constructor, we can inject different implementations of ProductRepository if needed.
   // Why is this better?
   // ✅ Testability → you can pass a fake/mock repository when writing tests.
@@ -41,17 +45,24 @@ class ProductService {
   /// Admin/Owner can update a product
   Future<void> updateProduct(ProductModel product) async {
     final normalizedName = product.name.trim().toLowerCase();
-    final existingProducts = await _repository.getProductsByCategory(
-      product.categoryId,
-    );
-    final duplicateExists = existingProducts.any(
-      (existingProduct) =>
-          existingProduct.productId != product.productId &&
-          existingProduct.name.trim().toLowerCase() == normalizedName,
-    );
+    try {
+      final existingProducts = await _repository
+          .getProductsByCategory(product.categoryId)
+          .timeout(_quickQueryTimeout);
+      final duplicateExists = existingProducts.any(
+        (existingProduct) =>
+            existingProduct.productId != product.productId &&
+            existingProduct.name.trim().toLowerCase() == normalizedName,
+      );
 
-    if (duplicateExists) {
-      throw Exception('Product already exists in this category.');
+      if (duplicateExists) {
+        throw Exception('Product already exists in this category.');
+      }
+    } catch (e) {
+      if (e.toString().toLowerCase().contains('product already exists')) {
+        rethrow;
+      }
+      // Offline/no-cache path: allow save and rely on backend sync later.
     }
 
     final updatedProduct = product.copyWith(updatedAt: DateTime.now());
@@ -70,12 +81,14 @@ class ProductService {
       print('🔄 Starting product image update...');
 
       // Upload new image
-      final newImageUrl = await _storageService.uploadProductImage(
-        businessId: businessId,
-        branchId: branchId,
-        imageBytes: newImageBytes,
-        fileExtension: fileExtension,
-      );
+      final newImageUrl = await _storageService
+          .uploadProductImage(
+            businessId: businessId,
+            branchId: branchId,
+            imageBytes: newImageBytes,
+            fileExtension: fileExtension,
+          )
+          .timeout(_quickUploadTimeout);
 
       print('✅ New image URL: $newImageUrl');
 
@@ -102,8 +115,17 @@ class ProductService {
 
       return updatedProduct; // Return the updated product
     } catch (e) {
-      print('❌ Error in updateProductImage: $e');
-      rethrow;
+      print('❌ Error in updateProductImage, queued for retry: $e');
+      await OfflineMediaUploadQueueService.instance.enqueueImageUpload(
+        businessId: businessId,
+        branchId: branchId,
+        collection: 'products',
+        documentId: product.productId,
+        folder: 'product_images',
+        imageBytes: newImageBytes,
+        fileExtension: fileExtension,
+      );
+      return product;
     }
   }
 
@@ -117,34 +139,67 @@ class ProductService {
   ) async {
     try {
       final normalizedName = product.name.trim().toLowerCase();
-      final existingProducts = await _repository.getProductsByCategory(
-        product.categoryId,
-      );
-      final duplicateExists = existingProducts.any(
-        (existingProduct) =>
-            existingProduct.name.trim().toLowerCase() == normalizedName,
-      );
+      try {
+        final existingProducts = await _repository
+            .getProductsByCategory(product.categoryId)
+            .timeout(_quickQueryTimeout);
+        final duplicateExists = existingProducts.any(
+          (existingProduct) =>
+              existingProduct.name.trim().toLowerCase() == normalizedName,
+        );
 
-      if (duplicateExists) {
-        throw Exception('Product already exists in this category.');
+        if (duplicateExists) {
+          throw Exception('Product already exists in this category.');
+        }
+      } catch (e) {
+        if (e.toString().toLowerCase().contains('product already exists')) {
+          rethrow;
+        }
+        // Offline/no-cache path: allow save and rely on backend sync later.
       }
+
+      Uint8List? pendingImageBytes;
+      String? pendingExtension;
 
       if (imageBytes != null &&
           imageBytes.isNotEmpty &&
           fileExtension != null &&
           fileExtension.isNotEmpty) {
-        // Upload image first
-        final imageUrl = await _storageService.uploadProductImage(
-          businessId: businessId,
-          branchId: branchId,
-          imageBytes: imageBytes,
-          fileExtension: fileExtension,
-        );
-        // Create product with image URL
-        product = product.copyWith(imageUrl: imageUrl);
+        try {
+          final imageUrl = await _storageService
+              .uploadProductImage(
+                businessId: businessId,
+                branchId: branchId,
+                imageBytes: imageBytes,
+                fileExtension: fileExtension,
+              )
+              .timeout(_quickUploadTimeout);
+          product = product.copyWith(imageUrl: imageUrl);
+        } catch (e) {
+          pendingImageBytes = imageBytes;
+          pendingExtension = fileExtension;
+          print('Image upload queued for offline retry: $e');
+        }
       }
 
-      return await _repository.addProduct(product);
+      final createdProduct = await _repository.addProduct(product);
+
+      if (pendingImageBytes != null &&
+          pendingImageBytes.isNotEmpty &&
+          pendingExtension != null &&
+          pendingExtension.isNotEmpty) {
+        await OfflineMediaUploadQueueService.instance.enqueueImageUpload(
+          businessId: businessId,
+          branchId: branchId,
+          collection: 'products',
+          documentId: createdProduct.productId,
+          folder: 'product_images',
+          imageBytes: pendingImageBytes,
+          fileExtension: pendingExtension,
+        );
+      }
+
+      return createdProduct;
     } catch (e) {
       rethrow;
     }

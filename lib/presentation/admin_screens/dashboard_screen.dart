@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hotel_management_system/core/utils/offline_media_upload_queue_service.dart';
 import 'package:hotel_management_system/data/models/user_model.dart';
 import 'package:hotel_management_system/data/models/sales_model_and_management.dart'
     show ReportPeriod;
-import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/presentation/admin_screens/expense_management_screen/expense_management_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/create_order_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/active_order_widget.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/orders_management_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/sales_dashboard/sales_dashboard_screen.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
+import 'package:hotel_management_system/state_management/current_tenant_business_provider.dart';
+import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
@@ -23,9 +25,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final branchId = BusinessRepository.temporaryBranchId;
-    final businessId = BusinessRepository.temporaryBusinesshId;
+    final tenantContext = ref.watch(tenantContextProvider);
+    final branchId = tenantContext.branchId;
+    final businessId = tenantContext.businessId;
     final userState = ref.watch(userProvider);
+    final businessAsync = ref.watch(currentTenantBusinessProvider);
+    final businessName = businessAsync.maybeWhen(
+      data: (business) => business?.title,
+      orElse: () => null,
+    );
+    final businessLogoUrl = businessAsync.maybeWhen(
+      data: (business) => business?.logoUrl,
+      orElse: () => null,
+    );
 
     // Step 1: handle loading & error states
     if (userState.isLoading) {
@@ -73,7 +85,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildWelcomeHeader(user, businessId, branchId),
+            _buildWelcomeHeader(
+              user,
+              businessId,
+              branchId,
+              businessName: businessName,
+              businessLogoUrl: businessLogoUrl,
+            ),
+            const SizedBox(height: 8),
+            _buildSyncStatusCompact(),
             const SizedBox(height: 16),
 
             ActiveOrdersWidget(
@@ -99,6 +119,31 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               _sectionTitle('Quick Actions'),
               _buildQuickActionsButtons(context, businessId, branchId),
             ],
+            const SizedBox(height: 32),
+            const Center(
+              child: Column(
+                children: [
+                  Text(
+                    'Powered by RoboLogicX',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'www.robologicx.org',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -118,14 +163,27 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   Widget _buildWelcomeHeader(
     UserModel user,
     String businessId,
-    String branchId,
-  ) {
+    String branchId, {
+    String? businessName,
+    String? businessLogoUrl,
+  }) {
+    final normalizedLogoUrl = businessLogoUrl?.trim();
+    final fallbackInitial = (businessName ?? user.name).trim().isNotEmpty
+        ? (businessName ?? user.name).trim()[0].toUpperCase()
+        : 'B';
+
     return Card(
       child: ListTile(
         leading: CircleAvatar(
-          backgroundImage: user.profileImageUrl != null
-              ? NetworkImage(user.profileImageUrl!)
+          foregroundImage:
+              (normalizedLogoUrl != null && normalizedLogoUrl.isNotEmpty)
+              ? NetworkImage(normalizedLogoUrl)
               : null,
+          onForegroundImageError:
+              (normalizedLogoUrl != null && normalizedLogoUrl.isNotEmpty)
+              ? (_, __) {}
+              : null,
+          child: Text(fallbackInitial),
         ),
         title: Text('Welcome, ${user.name}'),
         subtitle: Text(
@@ -134,6 +192,77 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildSyncStatusCompact() {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: ValueListenableBuilder<OfflineMediaSyncStatus>(
+        valueListenable: OfflineMediaUploadQueueService.statusNotifier,
+        builder: (context, status, _) {
+          final hasPending = status.pendingUploads > 0;
+          final isSyncing = status.isSyncing;
+
+          final Color color = isSyncing
+              ? Colors.blue
+              : hasPending
+              ? Colors.orange
+              : Colors.green;
+
+          final String summary = isSyncing
+              ? 'Syncing ${status.pendingUploads} pending'
+              : hasPending
+              ? '${status.pendingUploads} pending uploads'
+              : 'All media synced';
+
+          final String lastSyncText = status.lastSyncAt == null
+              ? 'Last sync: --'
+              : 'Last sync: ${_formatSyncTime(status.lastSyncAt!)}';
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withAlpha(24),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: color.withAlpha(80)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.sync, size: 14, color: color),
+                const SizedBox(width: 6),
+                Text(
+                  '$summary • $lastSyncText',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  String _formatSyncTime(DateTime value) {
+    final now = DateTime.now();
+    final sameDay =
+        now.year == value.year &&
+        now.month == value.month &&
+        now.day == value.day;
+
+    final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
+    final minute = value.minute.toString().padLeft(2, '0');
+    final amPm = value.hour >= 12 ? 'PM' : 'AM';
+
+    if (sameDay) {
+      return '$hour:$minute $amPm';
+    }
+
+    return '${value.day}/${value.month} $hour:$minute $amPm';
   }
 
   // ---------- Placeholder Widgets (replace with actual UI) ----------

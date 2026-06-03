@@ -76,6 +76,17 @@ class TableModel {
   }
 
   factory TableModel.fromMap(Map<String, dynamic> map) {
+    DateTime parseDateTime(dynamic value) {
+      if (value is Timestamp) return value.toDate();
+      if (value is DateTime) return value;
+      if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+      if (value is String) {
+        final parsed = DateTime.tryParse(value);
+        if (parsed != null) return parsed;
+      }
+      return DateTime.now();
+    }
+
     return TableModel(
       id: map['id'] ?? '',
       businessId: map['businessId'] ?? '',
@@ -89,8 +100,8 @@ class TableModel {
       ),
       locationHint: map['locationHint'],
       mergeGroupId: map['mergeGroupId'],
-      createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
-      updatedAt: DateTime.tryParse(map['updatedAt'] ?? '') ?? DateTime.now(),
+      createdAt: parseDateTime(map['createdAt']),
+      updatedAt: parseDateTime(map['updatedAt']),
     );
   }
 

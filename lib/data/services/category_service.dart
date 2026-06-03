@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:hotel_management_system/core/utils/offline_media_upload_queue_service.dart';
 import 'package:hotel_management_system/data/services/image_storage_service.dart';
 
 import '../models/category_model.dart';
@@ -27,32 +28,61 @@ class CategoryService {
     }
 
     final normalizedName = category.name.trim().toLowerCase();
-    final existingCategories = await _repository.getCategoriesByMenu(
-      category.menuId,
-    );
-    final duplicateExists = existingCategories.any(
-      (existingCategory) =>
-          existingCategory.name.trim().toLowerCase() == normalizedName,
-    );
+    try {
+      final existingCategories = await _repository.getCategoriesByMenu(
+        category.menuId,
+      );
+      final duplicateExists = existingCategories.any(
+        (existingCategory) =>
+            existingCategory.name.trim().toLowerCase() == normalizedName,
+      );
 
-    if (duplicateExists) {
-      throw Exception('Category already exists in this menu.');
+      if (duplicateExists) {
+        throw Exception('Category already exists in this menu.');
+      }
+    } catch (e) {
+      if (e.toString().toLowerCase().contains('category already exists')) {
+        rethrow;
+      }
+      // Offline/no-cache path: allow save and rely on backend sync later.
     }
 
     try {
+      Uint8List? pendingImageBytes;
+      String? pendingExtension;
+
       if (imageBytes != null && imageBytes.isNotEmpty) {
-        // Upload image first
-        final imageUrl = await _storageService.uploadProductImage(
-          businessId: businessId,
-          branchId: branchId,
-          imageBytes: imageBytes,
-          fileExtension: fileExtension,
-        );
-        // Create product with image URL
-        category = category.copyWith(imageUrl: imageUrl);
+        try {
+          final imageUrl = await _storageService.uploadProductImage(
+            businessId: businessId,
+            branchId: branchId,
+            imageBytes: imageBytes,
+            fileExtension: fileExtension,
+          );
+          category = category.copyWith(imageUrl: imageUrl);
+        } catch (e) {
+          pendingImageBytes = imageBytes;
+          pendingExtension = fileExtension;
+          print('Image upload queued for offline retry: $e');
+        }
       }
 
-      await _repository.addCategory(category);
+      final savedCategory = await _repository.addCategory(category);
+
+      if (pendingImageBytes != null &&
+          pendingImageBytes.isNotEmpty &&
+          pendingExtension != null &&
+          pendingExtension.isNotEmpty) {
+        await OfflineMediaUploadQueueService.instance.enqueueImageUpload(
+          businessId: businessId,
+          branchId: branchId,
+          collection: 'categories',
+          documentId: savedCategory.id,
+          folder: 'category_images',
+          imageBytes: pendingImageBytes,
+          fileExtension: pendingExtension,
+        );
+      }
     } catch (e) {
       rethrow;
     }
@@ -98,17 +128,24 @@ class CategoryService {
     }
 
     final normalizedName = updatedName.trim().toLowerCase();
-    final existingCategories = await _repository.getCategoriesByMenu(
-      updatedMenuId,
-    );
-    final duplicateExists = existingCategories.any(
-      (category) =>
-          category.id != id &&
-          category.name.trim().toLowerCase() == normalizedName,
-    );
+    try {
+      final existingCategories = await _repository.getCategoriesByMenu(
+        updatedMenuId,
+      );
+      final duplicateExists = existingCategories.any(
+        (category) =>
+            category.id != id &&
+            category.name.trim().toLowerCase() == normalizedName,
+      );
 
-    if (duplicateExists) {
-      throw Exception('Category already exists in this menu.');
+      if (duplicateExists) {
+        throw Exception('Category already exists in this menu.');
+      }
+    } catch (e) {
+      if (e.toString().toLowerCase().contains('category already exists')) {
+        rethrow;
+      }
+      // Offline/no-cache path: allow save and rely on backend sync later.
     }
 
     await _repository.updateCategory(id, data);
@@ -140,7 +177,15 @@ class CategoryService {
         await _storageService.deleteProductImage(oldImageUrl);
       }
     } catch (e) {
-      rethrow;
+      await OfflineMediaUploadQueueService.instance.enqueueImageUpload(
+        businessId: businessId,
+        branchId: branchId,
+        collection: 'categories',
+        documentId: category.id,
+        folder: 'category_images',
+        imageBytes: newImageBytes,
+        fileExtension: fileExtension,
+      );
     }
   }
 

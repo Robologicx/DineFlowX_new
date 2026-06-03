@@ -1,9 +1,9 @@
 ﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
-import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/repositories/order_repository.dart';
 import 'package:hotel_management_system/data/services/order_service.dart';
+import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 import 'package:uuid/uuid.dart';
 
 class OrderState {
@@ -206,9 +206,10 @@ class OrderNotifier extends StateNotifier<OrderState> {
 }
 
 final orderNotifierProvider = Provider<OrderRepository>((ref) {
+  final tenantContext = ref.watch(tenantContextProvider);
   return OrderRepository(
-    businessId: BusinessRepository.temporaryBusinesshId,
-    branchId: BusinessRepository.temporaryBranchId,
+    businessId: tenantContext.businessId,
+    branchId: tenantContext.branchId,
     tableNotifier: null,
   );
 });

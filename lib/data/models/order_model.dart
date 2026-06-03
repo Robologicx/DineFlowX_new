@@ -152,6 +152,19 @@ class OrderModel {
 
     final additionalNotes = data['additionalNotes'] as String?;
 
+    DateTime parseDateTime(dynamic value) {
+      if (value is Timestamp) return value.toDate();
+      if (value is DateTime) return value;
+      if (value is String) {
+        final parsed = DateTime.tryParse(value);
+        if (parsed != null) return parsed;
+      }
+      if (value is int) {
+        return DateTime.fromMillisecondsSinceEpoch(value);
+      }
+      return DateTime.now();
+    }
+
     return OrderModel(
       orderId: documentId,
       userId: userId,
@@ -178,8 +191,8 @@ class OrderModel {
             ? OrderStatus.completed
             : OrderStatus.pending,
       ),*/
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: parseDateTime(data['createdAt']),
+      updatedAt: parseDateTime(data['updatedAt']),
       deliveryAddress: data['deliveryAddress'] as String?,
       deliveryLocation: deliveryLocation,
       diningTable: data['diningTable'] != null

@@ -35,6 +35,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 //   final DateTime updatedAt;
 
 class BusinessModel {
+  static const Object _noChange = Object();
+
   final String id; // Unique business ID (hotelId, shopId, etc.)
   final String ownerId; // User ID of the owner/admin
   final String title; // Business name (Hotel XYZ, Cafe ABC, etc.)
@@ -203,8 +205,8 @@ class BusinessModel {
     String? ownerId,
     String? title,
     String? description,
-    String? logoUrl,
-    String? coverImageUrl,
+    Object? logoUrl = _noChange,
+    Object? coverImageUrl = _noChange,
     String? phone,
     String? email,
     String? website,
@@ -231,8 +233,12 @@ class BusinessModel {
       ownerId: ownerId ?? this.ownerId,
       title: title ?? this.title,
       description: description ?? this.description,
-      logoUrl: logoUrl ?? this.logoUrl,
-      coverImageUrl: coverImageUrl ?? this.coverImageUrl,
+      logoUrl: identical(logoUrl, _noChange)
+          ? this.logoUrl
+          : logoUrl as String?,
+      coverImageUrl: identical(coverImageUrl, _noChange)
+          ? this.coverImageUrl
+          : coverImageUrl as String?,
       phone: phone ?? this.phone,
       email: email ?? this.email,
       website: website ?? this.website,

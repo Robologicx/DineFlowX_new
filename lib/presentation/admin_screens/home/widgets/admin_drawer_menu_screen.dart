@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/permissions.dart';
 import 'package:hotel_management_system/routes/admin_app_routes.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
+import 'package:hotel_management_system/state_management/current_tenant_business_provider.dart';
 
 class AdminDrawerMenuScreen extends ConsumerStatefulWidget {
   const AdminDrawerMenuScreen({super.key});
@@ -23,6 +24,19 @@ class _AdminDrawerMenuScreenState extends ConsumerState<AdminDrawerMenuScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(userProvider);
     final userNotifier = ref.read(userProvider.notifier);
+    final businessAsync = ref.watch(currentTenantBusinessProvider);
+    final businessName = businessAsync.maybeWhen(
+      data: (business) {
+        final title = business?.title.trim() ?? '';
+        return title.isEmpty ? 'Business' : title;
+      },
+      orElse: () => 'Business',
+    );
+    final logoUrl = businessAsync.maybeWhen(
+      data: (business) => business?.logoUrl,
+      orElse: () => null,
+    );
+    final normalizedLogoUrl = logoUrl?.trim();
 
     if (user.isLoading) {
       return Center(child: CircularProgressIndicator());
@@ -42,10 +56,27 @@ class _AdminDrawerMenuScreenState extends ConsumerState<AdminDrawerMenuScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   spacing: 10,
                   children: [
-                    Center(child: Icon(Icons.business_center)),
+                    CircleAvatar(
+                      radius: 24,
+                      foregroundImage:
+                          (normalizedLogoUrl != null &&
+                              normalizedLogoUrl.isNotEmpty)
+                          ? NetworkImage(normalizedLogoUrl)
+                          : null,
+                      onForegroundImageError:
+                          (normalizedLogoUrl != null &&
+                              normalizedLogoUrl.isNotEmpty)
+                          ? (_, __) {}
+                          : null,
+                      child:
+                          (normalizedLogoUrl == null ||
+                              normalizedLogoUrl.isEmpty)
+                          ? const Icon(Icons.business_center)
+                          : null,
+                    ),
                     Expanded(
                       child: Text(
-                        "Hotel Management",
+                        businessName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -292,7 +323,7 @@ class _AdminDrawerMenuScreenState extends ConsumerState<AdminDrawerMenuScreen> {
               ),
 
               Text(
-                "Powered by ROBOLOGICX",
+                'Powered by RoboLogicX',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
 

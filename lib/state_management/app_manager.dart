@@ -30,6 +30,7 @@ class AppManager {
 
   Future<void> initializeApp() async {
     try {
+      ref.read(appInitializationErrorProvider.notifier).state = null;
       ref.read(appInitializationStateProvider.notifier).state =
           AppInitializationState.checkingAuth;
       // Step 1: Check auth status
@@ -77,6 +78,7 @@ class AppManager {
       ref.read(appInitializationStateProvider.notifier).state =
           AppInitializationState.initialized;
     } catch (e) {
+      ref.read(appInitializationErrorProvider.notifier).state = e.toString();
       ref.read(appInitializationStateProvider.notifier).state =
           AppInitializationState.error;
       // u can also pass e.toString() to error later.
@@ -433,6 +435,7 @@ class AppManager {
   Future<void> _handleLoggedOut() async {
     // Clear any existing data
     ref.invalidate(userProvider);
+    ref.read(appInitializationErrorProvider.notifier).state = null;
     // ref.invalidate(userServiceProvider);
 
     // Navigate to login or show login screen
@@ -442,25 +445,50 @@ class AppManager {
 
   Future<void> _initializeUserData() async {
     final authService = ref.read(authServiceProvider);
-    // this is not the same as document snapshot uid for new user that admin add. so not using this id to login
     final currentUser = authService.currentUser;
-    final querySnapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .where('email', isEqualTo: currentUser?.email)
-        .limit(1)
-        .get();
-    String? uid;
-    if (querySnapshot.docs.isNotEmpty) {
-      final doc = querySnapshot.docs.first;
-      uid = doc.id;
-    }
     if (currentUser == null) {
       throw Exception('No user found after auth check');
     }
 
+    final usersRef = FirebaseFirestore.instance.collection('users');
+    final authUid = currentUser.uid;
+    var uidToLoad = authUid;
+
+    final uidDoc = await usersRef.doc(authUid).get();
+    if (!uidDoc.exists) {
+      final email = (currentUser.email ?? '').trim().toLowerCase();
+      if (email.isEmpty) {
+        throw Exception('No email found for authenticated user.');
+      }
+
+      final byEmail = await usersRef
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
+
+      if (byEmail.docs.isEmpty) {
+        throw Exception('No user profile found for $email.');
+      }
+
+      final legacyDoc = byEmail.docs.first;
+      uidToLoad = legacyDoc.id;
+
+      // Self-heal legacy records where root user doc id differs from Firebase Auth uid.
+      if (legacyDoc.id != authUid) {
+        final data = legacyDoc.data();
+        await usersRef.doc(authUid).set({
+          ...data,
+          'uid': authUid,
+          'email': email,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        uidToLoad = authUid;
+      }
+    }
+
     // Initialize user notifier
     final userNotifier = ref.read(userProvider.notifier);
-    await userNotifier.loadUser(uid!);
+    await userNotifier.loadUser(uidToLoad);
 
     // Wait for user data to be fully loaded
     await _waitForUserData();
@@ -612,6 +640,8 @@ enum AppInitializationState {
 final appInitializationStateProvider = StateProvider<AppInitializationState>(
   (ref) => AppInitializationState.notInitialized,
 );
+
+final appInitializationErrorProvider = StateProvider<String?>((ref) => null);
 
 final appManagerProvider = Provider<AppManager>((ref) {
   return AppManager(ref);

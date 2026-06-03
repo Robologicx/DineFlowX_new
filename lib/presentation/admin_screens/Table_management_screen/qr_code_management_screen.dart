@@ -11,6 +11,7 @@ import 'package:hotel_management_system/presentation/client_screens/widgets/load
 import 'package:hotel_management_system/state_management/app_providers.dart';
 import 'package:hotel_management_system/state_management/room_state_and_notifier.dart';
 import 'package:hotel_management_system/state_management/table_state_and_notifier.dart';
+import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 class QRCodeGenerationScreen extends ConsumerStatefulWidget {
@@ -26,31 +27,48 @@ class _QRCodeGenerationScreenState
   String? _selectedRoomFilter;
   late TableNotifier tableNotifier;
   late RoomNotifier roomNotifier;
-  late String businessId;
-  late String branchId;
+  String _loadedBusinessId = '';
+  String _loadedBranchId = '';
 
   @override
   void initState() {
     super.initState();
-    businessId = BusinessRepository.temporaryBusinesshId;
-    branchId = BusinessRepository.temporaryBranchId;
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _loadForCurrentTenant(),
+    );
+  }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      tableNotifier = ref.read(
-        tableProvider((businessId: businessId, branchId: branchId)).notifier,
-      );
-      await tableNotifier.loadAllTables();
+  Future<void> _loadForCurrentTenant() async {
+    final tenant = ref.read(tenantContextProvider);
+    final businessId = tenant.businessId.trim();
+    final branchId = tenant.branchId.trim();
+    if (businessId.isEmpty || branchId.isEmpty) {
+      return;
+    }
+    if (_loadedBusinessId == businessId && _loadedBranchId == branchId) {
+      return;
+    }
 
-      roomNotifier = ref.read(
-        roomProvider((businessId: businessId, branchId: branchId)).notifier,
-      );
-      roomNotifier.setBusinessContext(businessId, branchId);
-      await roomNotifier.loadAllRooms();
-    });
+    _loadedBusinessId = businessId;
+    _loadedBranchId = branchId;
+
+    tableNotifier = ref.read(
+      tableProvider((businessId: businessId, branchId: branchId)).notifier,
+    );
+    await tableNotifier.loadAllTables();
+
+    roomNotifier = ref.read(
+      roomProvider((businessId: businessId, branchId: branchId)).notifier,
+    );
+    roomNotifier.setBusinessContext(businessId, branchId);
+    await roomNotifier.loadAllRooms();
   }
 
   void _handleRoomFilter(String? roomId) {
     setState(() => _selectedRoomFilter = roomId);
+    final tenant = ref.read(tenantContextProvider);
+    final businessId = tenant.businessId.trim();
+    final branchId = tenant.branchId.trim();
     final notifier = ref.read(
       tableProvider((businessId: businessId, branchId: branchId)).notifier,
     );
@@ -172,11 +190,18 @@ class _QRCodeGenerationScreenState
 
   @override
   Widget build(BuildContext context) {
+    final tenant = ref.watch(tenantContextProvider);
+    final businessId = tenant.businessId.trim();
+    final branchId = tenant.branchId.trim();
+
+    if (businessId.isNotEmpty && branchId.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadForCurrentTenant();
+      });
+    }
+
     final tableState = ref.watch(
       tableProvider((businessId: businessId, branchId: branchId)),
-    );
-    final roomState = ref.watch(
-      roomProvider((businessId: businessId, branchId: branchId)),
     );
     final user = ref.read(userProvider);
 
@@ -252,6 +277,9 @@ class _QRCodeGenerationScreenState
   }
 
   Widget _buildQRCard(TableModel table) {
+    final tenant = ref.read(tenantContextProvider);
+    final businessId = tenant.businessId.trim();
+    final branchId = tenant.branchId.trim();
     final notifier = ref.read(
       tableProvider((businessId: businessId, branchId: branchId)).notifier,
     );

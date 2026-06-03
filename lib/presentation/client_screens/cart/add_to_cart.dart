@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hotel_management_system/core/utils/offline_order_queue_service.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
-import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/repositories/table_repository.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/product_selection_dialog_for_taking_order.dart';
+import 'package:hotel_management_system/presentation/client_screens/cart/check_out_screen.dart';
+import 'package:hotel_management_system/presentation/client_screens/home/client_shell.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_button.dart';
 import 'package:hotel_management_system/routes/client_app_routes.dart';
 import 'package:hotel_management_system/state_management/client_cart_state_and_notifier.dart';
 import 'package:hotel_management_system/state_management/direct_dining_state.dart';
 import 'package:hotel_management_system/state_management/order_state_and_notifier.dart';
+import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 import 'package:uuid/uuid.dart';
 
 class AddToCartScreen extends ConsumerStatefulWidget {
@@ -30,6 +33,54 @@ class AddToCartScreen extends ConsumerStatefulWidget {
 }
 
 class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
+  void _navigateToClientShell(BuildContext context) {
+    try {
+      context.replaceNamed(
+        ClientAppRoutes.shell,
+        queryParameters: {
+          'businessId': widget.businessId,
+          'branchId': widget.branchId,
+          if ((widget.tableId ?? '').trim().isNotEmpty)
+            'tableId': widget.tableId!.trim(),
+        },
+      );
+    } catch (_) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ClientHomeShell(
+            businessId: widget.businessId,
+            branchId: widget.branchId,
+            tableId: widget.tableId,
+          ),
+        ),
+      );
+    }
+  }
+
+  void _navigateToCheckout(
+    BuildContext context, {
+    required List<OrderItem> items,
+    required double totalAmount,
+  }) {
+    try {
+      context.goNamed(
+        ClientAppRoutes.checkOut,
+        extra: {
+          'items': items,
+          'totalAmount': totalAmount,
+          'tableId': _currentTableId,
+        },
+      );
+    } catch (_) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) =>
+              CheckOutScreen(items: items, totalAmount: totalAmount),
+        ),
+      );
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -115,14 +166,7 @@ class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
       _placeDirectOrder(ref, safeItems, safeTotal, context);
     } else {
       // Normal logged-in user - navigate to checkout screen
-      context.goNamed(
-        ClientAppRoutes.checkOut,
-        extra: {
-          'items': safeItems,
-          'totalAmount': safeTotal,
-          'tableId': _currentTableId,
-        },
-      );
+      _navigateToCheckout(context, items: safeItems, totalAmount: safeTotal);
     }
   }
 
@@ -174,7 +218,7 @@ class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
       if (context.mounted) {
         Navigator.of(context).pop(); // Close loading dialog
         // Navigate back to main screen
-        context.replaceNamed(ClientAppRoutes.shell);
+        _navigateToClientShell(context);
       }
     } catch (e) {
       // Handle error
@@ -197,35 +241,57 @@ class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
     String? tableId, {
     required WidgetRef ref,
   }) async {
+    final tenantContext = ref.read(tenantContextProvider);
+    final directDiningState = ref.read(directDiningProvider);
+    final effectiveBusinessId = widget.businessId.trim().isNotEmpty
+        ? widget.businessId
+        : (directDiningState.businessId?.trim().isNotEmpty == true
+              ? directDiningState.businessId!
+              : tenantContext.businessId);
+    final effectiveBranchId = widget.branchId.trim().isNotEmpty
+        ? widget.branchId
+        : (directDiningState.branchId?.trim().isNotEmpty == true
+              ? directDiningState.branchId!
+              : tenantContext.branchId);
+
     final TableModel? table = await TableRepository(
-      branchId: BusinessRepository.temporaryBranchId,
-      businessId: BusinessRepository.temporaryBusinesshId,
+      branchId: effectiveBranchId,
+      businessId: effectiveBusinessId,
     ).getTableById(tableId!);
+    final order = OrderModel(
+      orderId: Uuid().v4(),
+      userId: 'guest_${DateTime.now().millisecondsSinceEpoch}',
+      userName: 'Guest Customer',
+      waiterId: 'QR_${DateTime.now().millisecondsSinceEpoch}',
+      waiterName: 'QR code Order',
+      orderType: OrderType.dining,
+      items: items,
+      diningTable: table,
+      totalAmount: totalAmount,
+      orderStatus: OrderStatus.pending,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    final hasInternet = await OfflineOrderQueueService.instance
+        .hasInternetConnection();
+
     // Create order directly using orderNotifierProvider
-    await ref
-        .read(orderNotifierProvider)
-        .createOrder(
-          OrderModel(
-            orderId: Uuid().v4(),
-            userId: 'guest_${DateTime.now().millisecondsSinceEpoch}',
-            userName: 'Guest Customer',
-            waiterId: 'QR_${DateTime.now().millisecondsSinceEpoch}',
-            waiterName: 'QR code Order',
-            orderType: OrderType.dining,
-            items: items,
-            diningTable: table,
-            totalAmount: totalAmount,
-            orderStatus: OrderStatus.pending,
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          ),
-        );
+    if (hasInternet) {
+      await ref.read(orderNotifierProvider).createOrder(order);
+    } else {
+      await OfflineOrderQueueService.instance.enqueueOrder(
+        businessId: effectiveBusinessId,
+        branchId: effectiveBranchId,
+        order: order,
+      );
+    }
   }
 
   void _clearDirectDiningAndNavigate(BuildContext context) {
     // Clear direct dining state when going back
     ref.read(directDiningProvider.notifier).state = const DirectDiningState();
-    context.replaceNamed(ClientAppRoutes.shell);
+    _navigateToClientShell(context);
   }
 
   @override

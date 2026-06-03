@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:hotel_management_system/presentation/admin_screens/auth/admin_login_form.dart';
 import 'package:hotel_management_system/presentation/admin_screens/auth/admin_sign_up_form.dart';
+import 'package:hotel_management_system/presentation/admin_screens/auth/super_admin_login_form.dart';
 
 class AdminLoginScreen extends StatefulWidget {
   const AdminLoginScreen({super.key});
@@ -23,8 +24,18 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final args = ModalRoute.of(context)?.settings.arguments;
+    int initialTab = 0;
+    if (args is Map && args['initialTab'] is int) {
+      initialTab = args['initialTab'] as int;
+      if (initialTab < 0 || initialTab > 2) {
+        initialTab = 0;
+      }
+    }
+
     return DefaultTabController(
-      length: 2,
+      initialIndex: initialTab,
+      length: 3,
       child: Scaffold(
         body: Column(
           children: [
@@ -50,6 +61,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   tabs: [
                     Tab(text: 'Login'),
                     Tab(text: 'Sign Up'),
+                    Tab(text: 'Super Admin'),
                   ],
                 ),
               ],
@@ -59,6 +71,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 children: [
                   SingleChildScrollView(child: AdminLoginForm()),
                   SingleChildScrollView(child: AdminSignUpForm()),
+                  SingleChildScrollView(child: SuperAdminLoginForm()),
                 ],
               ),
             ),

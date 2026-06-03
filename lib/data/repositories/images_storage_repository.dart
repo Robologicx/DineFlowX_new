@@ -19,7 +19,13 @@ class StorageRepository {
     try {
       // Delete old file if exists
       if (oldFileUrl != null && oldFileUrl.isNotEmpty) {
-        await deleteFile(oldFileUrl);
+        try {
+          await deleteFile(oldFileUrl);
+        } catch (e) {
+          if (!_isObjectNotFoundError(e)) {
+            rethrow;
+          }
+        }
       }
 
       // Upload new file and return its URL
@@ -79,9 +85,23 @@ class StorageRepository {
     try {
       final ref = _storage.refFromURL(fileUrl);
       await ref.delete();
+    } on FirebaseException catch (e) {
+      if (e.code == 'object-not-found') {
+        return;
+      }
+      throw Exception('Delete failed: ${e.message ?? e.code}');
     } catch (e) {
       throw Exception('Delete failed: $e');
     }
+  }
+
+  bool _isObjectNotFoundError(Object error) {
+    if (error is FirebaseException) {
+      return error.code == 'object-not-found';
+    }
+    final lower = error.toString().toLowerCase();
+    return lower.contains('object-not-found') ||
+        lower.contains('no object exists at the desired reference');
   }
   // Upload file with metadata
   // Future<String> uploadFile({

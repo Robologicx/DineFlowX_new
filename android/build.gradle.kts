@@ -22,6 +22,12 @@ subprojects {
 subprojects {
     plugins.withId("com.android.library") {
         extensions.configure<LibraryExtension>("android") {
+            // Some transitive Flutter plugins default to older compileSdk values,
+            // which breaks aapt with newer AndroidX resources (e.g. lStar attr).
+            val currentCompileSdk = compileSdk ?: 0
+            if (currentCompileSdk < 36) {
+                compileSdk = 36
+            }
             if (namespace.isNullOrBlank()) {
                 namespace = "com.example.${project.name}"
             }

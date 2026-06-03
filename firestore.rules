@@ -2,10 +2,209 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+      function authEmail() {
+        return (isSignedIn() && request.auth.token.email is string)
+            ? request.auth.token.email
+            : '';
+      }
+
+      function isRoboLogicxEmail() {
+        return authEmail().matches('[Ii][Nn][Ff][Oo]\\.[Rr][Oo][Bb][Oo][Ll][Oo][Gg][Ii][Cc][Xx]@gmail\\.com') ||
+            authEmail().matches('.*@[Rr][Oo][Bb][Oo][Ll][Oo][Gg][Ii][Cc][Xx]\\.com$');
+      }
+
+      function hasSuperAdminUserRole() {
+        return isSignedIn() &&
+            exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role is string &&
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.matches('[Ss][Uu][Pp][Ee][Rr][_ -]?[Aa][Dd][Mm][Ii][Nn]');
+      }
+
+    function isSuperAdmin() {
+      return isSignedIn() &&
+          (
+            request.auth.token.superAdmin == true ||
+              isRoboLogicxEmail() ||
+              hasSuperAdminUserRole() ||
+            (
+              exists(/databases/$(database)/documents/super_admins/$(request.auth.uid)) &&
+              get(/databases/$(database)/documents/super_admins/$(request.auth.uid)).data.isActive == true
+            )
+          );
+    }
+
+    function isBootstrapSuperAdminEmail() {
+        return isSignedIn() &&
+          authEmail().matches('[Ii][Nn][Ff][Oo]\\.[Rr][Oo][Bb][Oo][Ll][Oo][Gg][Ii][Cc][Xx]@gmail\\.com');
+    }
+
+    function isBusinessOwner(businessId) {
+      return isSignedIn() &&
+          (
+            get(/databases/$(database)/documents/businesses/$(businessId)).data.ownerId == request.auth.uid ||
+              get(/databases/$(database)/documents/businesses/$(businessId)).data.ownerEmail == authEmail()
+          );
+    }
+
+    function isBranchMember(businessId, branchId) {
+      return isSignedIn() &&
+          exists(/databases/$(database)/documents/businesses/$(businessId)/branches/$(branchId)/users/$(request.auth.uid));
+    }
+
+    function isMappedTenantUser(businessId, branchId) {
+      return isSignedIn() &&
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.primarybusinessId == businessId &&
+          (
+            branchId == null ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.primaryBranchId == branchId
+          );
+    }
+
+    function isBusinessEnabled(businessId) {
+      return exists(/databases/$(database)/documents/businesses/$(businessId)) &&
+          get(/databases/$(database)/documents/businesses/$(businessId)).data.isDeleted != true &&
+          get(/databases/$(database)/documents/businesses/$(businessId)).data.isActive != false &&
+          get(/databases/$(database)/documents/businesses/$(businessId)).data.status != 'suspended' &&
+          get(/databases/$(database)/documents/businesses/$(businessId)).data.status != 'disabled' &&
+          get(/databases/$(database)/documents/businesses/$(businessId)).data.status != 'deleted';
+    }
+
+    // Platform-owned data (Super Admin only)
+    match /platform/{document=**} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    // Root users collection: user can manage only own profile; super admin can manage all.
+    match /users/{uid} {
+      allow read: if isSuperAdmin() ||
+          (isSignedIn() && request.auth.uid == uid) ||
+          (isSignedIn() && resource.data.email == request.auth.token.email);
+      allow write: if isSuperAdmin() || (isSignedIn() && request.auth.uid == uid);
+    }
+
+    // Super admin allowlist records.
+    match /super_admins/{uid} {
+      allow read: if isSuperAdmin() || (isSignedIn() && request.auth.uid == uid);
+      allow create: if isSuperAdmin() ||
+          (
+            isSignedIn() &&
+            request.auth.uid == uid &&
+            (
+              isBootstrapSuperAdminEmail() ||
+              request.auth.token.email.matches('.*@[Rr][Oo][Bb][Oo][Ll][Oo][Gg][Ii][Cc][Xx]\\.com$')
+            )
+          );
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // Platform subscription records used by tenant bootstrap.
+    match /platform_subscriptions/{businessId} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    // Public business key -> businessId mapping used by client URL resolver.
+    match /public_business_keys/{key} {
+      allow read: if true;
+      allow create, update: if isSuperAdmin() ||
+          (
+            isSignedIn() &&
+            request.resource.data.businessId is string &&
+            isBusinessOwner(request.resource.data.businessId)
+          );
+      allow delete: if isSuperAdmin() ||
+          (
+            isSignedIn() &&
+            resource.data.businessId is string &&
+            isBusinessOwner(resource.data.businessId)
+          );
+    }
+
+    // Global orders collection-group read for super admin analytics.
+    // This prevents collectionGroup('orders') from failing when any orders
+    // path exists outside the primary tenant branch structure.
+    match /{path=**}/orders/{orderId} {
+      allow read: if isSuperAdmin();
+    }
+
+    // Tenant root document and nested data.
+    match /businesses/{businessId} {
+      allow read: if isSuperAdmin() || isBusinessOwner(businessId) ||
+          isMappedTenantUser(businessId, null) ||
+          isBusinessEnabled(businessId) ||
+          (isSignedIn() && request.auth.token.tenantId == businessId);
+      allow create: if isSuperAdmin();
+      allow update, delete: if isSuperAdmin() || isBusinessOwner(businessId) || isMappedTenantUser(businessId, null);
+
+      match /subscriptions/{subscriptionId} {
+        allow read, write: if isSuperAdmin() || isBusinessOwner(businessId) || isMappedTenantUser(businessId, null);
+      }
+
+      match /settings/{settingId} {
+        allow read, write: if isSuperAdmin() || isBusinessOwner(businessId) || isMappedTenantUser(businessId, null);
+      }
+
+      match /branches/{branchId} {
+        allow read: if isSuperAdmin() || isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId) || isBusinessEnabled(businessId);
+        allow create, update, delete: if isSuperAdmin() ||
+            ((isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId)) && isBusinessEnabled(businessId));
+
+        // Public client menu access (QR flow) for active businesses.
+        match /categories/{categoryId} {
+          allow read: if isBusinessEnabled(businessId) || isSuperAdmin() || isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId);
+          allow create, update, delete: if isSuperAdmin() ||
+              ((isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId)) && isBusinessEnabled(businessId));
+        }
+
+        match /products/{productId} {
+          allow read: if isBusinessEnabled(businessId) || isSuperAdmin() || isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId);
+          allow create, update, delete: if isSuperAdmin() ||
+              ((isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId)) && isBusinessEnabled(businessId));
+        }
+
+        match /menus/{menuId} {
+          allow read: if isBusinessEnabled(businessId) || isSuperAdmin() || isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId);
+          allow create, update, delete: if isSuperAdmin() ||
+              ((isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId)) && isBusinessEnabled(businessId));
+        }
+
+        match /diningTables/{tableId} {
+          allow read: if isBusinessEnabled(businessId) || isSuperAdmin() || isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId);
+          allow create, update, delete: if isSuperAdmin() ||
+              ((isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId)) && isBusinessEnabled(businessId));
+        }
+
+        // Allow guest QR ordering without auth; keep updates/deletes protected.
+        match /orders/{orderId} {
+          allow read: if isSuperAdmin() || isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId);
+          allow create: if
+              (
+                isBusinessEnabled(businessId) &&
+                request.resource.data.keys().hasAll(['orderType', 'items', 'totalAmount', 'orderStatus', 'createdAt', 'updatedAt']) &&
+                request.resource.data.items is list &&
+                request.resource.data.totalAmount is number
+              )
+              ||
+              (isSuperAdmin() || isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId));
+          allow update, delete: if isSuperAdmin() ||
+              ((isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId)) && isBusinessEnabled(businessId));
+        }
+
+        match /{collectionName}/{docId} {
+          allow read: if isSuperAdmin() || isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId);
+          allow create, update, delete: if isSuperAdmin() ||
+              ((isBusinessOwner(businessId) || isBranchMember(businessId, branchId) || isMappedTenantUser(businessId, branchId)) && isBusinessEnabled(businessId));
+        }
+      }
+    }
+
+    // Deny everything else by default.
     match /{document=**} {
-      // Development rule: allow app to seed and run.
-      // Tighten this before production.
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

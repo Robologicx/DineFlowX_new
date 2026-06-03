@@ -9,6 +9,8 @@ class ThermalReceiptBuilder {
   static Future<Uint8List> generateReceiptBytes(
     OrderModel order, {
     required String type,
+    String? businessName,
+    String? businessLogoUrl,
   }) async {
     // Load capability profile for your printer
     final profile = await CapabilityProfile.load();
@@ -16,7 +18,10 @@ class ThermalReceiptBuilder {
     List<int> bytes = [];
 
     // 1️⃣ Load logo
-    final logoBytes = await _loadAssetBytes('assets/images/logo.png');
+    Uint8List? logoBytes;
+    if (businessLogoUrl != null && businessLogoUrl.isNotEmpty) {
+      logoBytes = await _loadNetworkBytes(businessLogoUrl);
+    }
     if (logoBytes != null) {
       final image = img.decodeImage(logoBytes);
       if (image != null) {
@@ -33,6 +38,20 @@ class ThermalReceiptBuilder {
     //     width: PosTextSize.size2,
     //   ),
     // );
+    final effectiveBusinessName =
+        (businessName != null && businessName.trim().isNotEmpty)
+        ? businessName.trim()
+        : 'Business';
+
+    bytes += generator.text(
+      effectiveBusinessName,
+      styles: PosStyles(
+        align: PosAlign.center,
+        bold: true,
+        height: PosTextSize.size2,
+        width: PosTextSize.size2,
+      ),
+    );
     bytes += generator.text('');
     bytes += generator.text(
       'ORDER RECEIPT',
@@ -106,12 +125,8 @@ class ThermalReceiptBuilder {
       styles: PosStyles(align: PosAlign.center),
     );
     bytes += generator.text(
-      'Powered by ROBOLOGICX',
+      effectiveBusinessName,
 
-      styles: PosStyles(align: PosAlign.center, height: PosTextSize.size1),
-    );
-    bytes += generator.text(
-      'WWW.ROBOLOGICX.ORG',
       styles: PosStyles(align: PosAlign.center, height: PosTextSize.size1),
     );
 
@@ -132,6 +147,19 @@ class ThermalReceiptBuilder {
       return data.buffer.asUint8List();
     } catch (e) {
       debugPrint('Failed to load asset $path: $e');
+      return null;
+    }
+  }
+
+  static Future<Uint8List?> _loadNetworkBytes(String url) async {
+    try {
+      final uri = Uri.tryParse(url);
+      if (uri == null) return null;
+      final bundle = NetworkAssetBundle(uri);
+      final data = await bundle.load(uri.toString());
+      return data.buffer.asUint8List();
+    } catch (e) {
+      debugPrint('Failed to load network image $url: $e');
       return null;
     }
   }

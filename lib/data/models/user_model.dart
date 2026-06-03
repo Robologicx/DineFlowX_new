@@ -86,11 +86,20 @@ class UserModel {
   factory UserModel.fromMap(String documentId, Map<String, dynamic> data) {
     final primarybusinessId = (data['primarybusinessId'] ?? '').toString();
     final primaryBranchId = (data['primaryBranchId'] ?? '').toString();
+    final isStaffMember = (data['isStaffMember'] ?? false) == true;
+    final fallbackRoleName = (data['roleName'] ?? data['role_name'] ?? '')
+        .toString()
+        .trim();
+    final fallbackRoleId =
+        (data['roleId'] ?? data['role_id'] ?? fallbackRoleName.toLowerCase())
+            .toString()
+            .trim();
+    final rawRole = data['role'];
 
-    if (!data['isStaffMember']) {
+    if (isStaffMember) {
       if (primaryBranchId.isEmpty || primarybusinessId.isEmpty) {
         throw Exception(
-          "Invalid data: primarybusinessId and primaryBranchId are required for non-staff members.",
+          "Invalid data: primarybusinessId and primaryBranchId are required for staff members.",
         );
       }
     }
@@ -100,17 +109,28 @@ class UserModel {
       email: (data['email'] ?? '').toString(),
       phoneNumber: data['phoneNumber']?.toString(),
       profileImageUrl: data['profileImageUrl']?.toString(),
-      isStaffMember: (data['isStaffMember'] ?? false) == true,
-      role: data['role'] != null
-          ? RoleModel.fromMap(data['role'] as Map<String, dynamic>)
-          : RoleModel(
-              id: '',
-              name: '',
-              permissions: [],
-              businessId: '',
-              createdAt: DateTime.now(),
-              updatedAt: DateTime.now(),
-            ),
+      isStaffMember: isStaffMember,
+      role: (() {
+        final fallbackRole = RoleModel(
+          id: fallbackRoleId,
+          name: fallbackRoleName,
+          permissions: const [],
+          businessId: primarybusinessId,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        if (rawRole is Map) {
+          final parsed = RoleModel.fromMap(Map<String, dynamic>.from(rawRole));
+          final hasParsedIdentity =
+              parsed.id.trim().isNotEmpty || parsed.name.trim().isNotEmpty;
+          if (hasParsedIdentity) {
+            return parsed;
+          }
+        }
+
+        return fallbackRole;
+      })(),
       favoriteProductIds: List<String>.from(
         (data['favoriteProductIds'] ?? const <dynamic>[]).map(
           (e) => e.toString(),

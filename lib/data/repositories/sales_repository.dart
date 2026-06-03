@@ -1,5 +1,6 @@
 // sales_repository.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 
 /// Repository handles ONLY Firestore data access
@@ -23,6 +24,29 @@ class SalesRepository {
       .doc(branchId)
       .collection('orders');
 
+  Stream<T> _pollingStream<T>(
+    Future<T> Function() loader, {
+    Duration interval = const Duration(seconds: 2),
+  }) async* {
+    yield await loader();
+    yield* Stream.periodic(interval).asyncMap((_) => loader());
+  }
+
+  Future<List<OrderModel>> _getLocalOrders() async {
+    final rows = await OfflineLocalReadService.instance.getBranchCollection(
+      businessId: businessId,
+      branchId: branchId,
+      collectionName: 'orders',
+    );
+
+    return rows
+        .map(
+          (row) =>
+              OrderModel.fromMap(row, (row['__documentId'] ?? '').toString()),
+        )
+        .toList();
+  }
+
   /// Get orders by date range and status
   Future<List<OrderModel>> getOrdersByDateRange({
     required DateTime startDate,
@@ -30,6 +54,25 @@ class SalesRepository {
     List<OrderStatus>? statuses,
   }) async {
     try {
+      final localOrders = await _getLocalOrders();
+      if (localOrders.isNotEmpty) {
+        final filtered = localOrders.where((order) {
+          final inRange =
+              order.createdAt.isAfter(
+                startDate.subtract(const Duration(milliseconds: 1)),
+              ) &&
+              order.createdAt.isBefore(
+                endDate.add(const Duration(milliseconds: 1)),
+              );
+
+          if (!inRange) return false;
+          if (statuses == null || statuses.isEmpty) return true;
+          return statuses.contains(order.orderStatus);
+        }).toList();
+
+        return filtered;
+      }
+
       // 1. Fetch ALL orders in the date range.
       Query query = _ordersCollection
           .where('createdAt', isGreaterThanOrEqualTo: startDate)
@@ -118,6 +161,22 @@ class SalesRepository {
     OrderStatus? status,
   }) async {
     try {
+      final localOrders = await _getLocalOrders();
+      if (localOrders.isNotEmpty) {
+        return localOrders.where((order) {
+          final inRange =
+              order.createdAt.isAfter(
+                startDate.subtract(const Duration(milliseconds: 1)),
+              ) &&
+              order.createdAt.isBefore(
+                endDate.add(const Duration(milliseconds: 1)),
+              );
+          if (!inRange) return false;
+          if (status == null) return true;
+          return order.orderStatus == status;
+        }).length;
+      }
+
       // Query by date range only
       Query query = _ordersCollection
           .where('createdAt', isGreaterThanOrEqualTo: startDate)
@@ -145,20 +204,30 @@ class SalesRepository {
 
   /// Stream orders for real-time updates (for dashboard)
   Stream<List<OrderModel>> streamActiveOrders() {
-    return _ordersCollection
-        .where('orderStatus', whereIn: ['pending', 'inProgress', 'ready'])
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map(
-                // FIX APPLIED HERE
-                (doc) => OrderModel.fromMap(
-                  doc.data() as Map<String, dynamic>,
-                  doc.id,
-                ),
-              )
-              .toList(),
-        );
+    return _pollingStream(() async {
+      final localOrders = await _getLocalOrders();
+      if (localOrders.isNotEmpty) {
+        final active = localOrders.where((order) {
+          return order.orderStatus == OrderStatus.pending ||
+              order.orderStatus == OrderStatus.inProgress ||
+              order.orderStatus == OrderStatus.ready;
+        }).toList();
+
+        active.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return active;
+      }
+
+      final snapshot = await _ordersCollection
+          .where('orderStatus', whereIn: ['pending', 'inProgress', 'ready'])
+          .get();
+
+      return snapshot.docs
+          .map(
+            (doc) =>
+                OrderModel.fromMap(doc.data() as Map<String, dynamic>, doc.id),
+          )
+          .toList();
+    });
   }
 
   /// Get orders grouped by day (for charts)

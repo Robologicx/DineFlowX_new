@@ -1,1 +1,166 @@
-{"firestore":{"database":"(default)","location":"nam5","rules":"firestore.rules","indexes":"firestore.indexes.json"},"storage":{"rules":"storage.rules"},"flutter":{"platforms":{"android":{"default":{"projectId":"dineflowx","appId":"1:880800764076:android:d26e249c5e00ed58e04f09","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"dineflowx","configurations":{"android":"1:880800764076:android:d26e249c5e00ed58e04f09","ios":"1:880800764076:ios:cdd9d6b9e34346fde04f09","macos":"1:880800764076:ios:cdd9d6b9e34346fde04f09","web":"1:880800764076:web:f2500b519cdfb8afe04f09","windows":"1:880800764076:web:1697b93066a42900e04f09"}}}}},"hosting":[{"site":"hostelmanagementsytem","public":"build/web","ignore":["firebase.json","**/.*","**/node_modules/**"],"headers":[{"source":"**","headers":[{"key":"Cache-Control","value":"no-cache, no-store, must-revalidate"}]},{"source":"**/*.@(js|css|html)","headers":[{"key":"Cache-Control","value":"max-age=0, must-revalidate"}]},{"source":"**/*.@(jpg|jpeg|gif|png|svg|webp|woff|woff2|ttf|eot|ico)","headers":[{"key":"Cache-Control","value":"max-age=3600"}]},{"source":"**/flutter_service_worker.js","headers":[{"key":"Cache-Control","value":"max-age=0, no-cache, must-revalidate"}]},{"source":"**/main.dart.js","headers":[{"key":"Cache-Control","value":"max-age=0, must-revalidate"}]}],"rewrites":[{"source":"**","destination":"/index.html"}]},{"site":"admin-icetouch","public":"build/web","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"**","destination":"/index.html"}]}]}
+{
+	"firestore": {
+		"database": "(default)",
+		"location": "nam5",
+		"rules": "firestore.rules",
+		"indexes": "firestore.indexes.json"
+	},
+	"storage": {
+		"rules": "storage.rules"
+	},
+	"flutter": {
+		"platforms": {
+			"android": {
+				"default": {
+					"projectId": "dineflowx",
+					"appId": "1:880800764076:android:d26e249c5e00ed58e04f09",
+					"fileOutput": "android/app/google-services.json"
+				}
+			},
+			"dart": {
+				"lib/firebase_options.dart": {
+					"projectId": "dineflowx",
+					"configurations": {
+						"android": "1:880800764076:android:d26e249c5e00ed58e04f09",
+						"ios": "1:880800764076:ios:cdd9d6b9e34346fde04f09",
+						"macos": "1:880800764076:ios:cdd9d6b9e34346fde04f09",
+						"web": "1:880800764076:web:f2500b519cdfb8afe04f09",
+						"windows": "1:880800764076:web:1697b93066a42900e04f09"
+					}
+				}
+			}
+		}
+	},
+	"functions": [
+		{
+			"source": "functions",
+			"runtime": "nodejs20"
+		}
+	],
+	"hosting": [
+		{
+			"target": "main",
+			"public": "build/web-main",
+			"ignore": [
+				"firebase.json",
+				"**/.*",
+				"**/node_modules/**"
+			],
+			"headers": [
+				{
+					"source": "**",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "no-cache, no-store, must-revalidate"
+						}
+					]
+				},
+				{
+					"source": "**/*.@(js|css|html)",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "max-age=0, must-revalidate"
+						}
+					]
+				},
+				{
+					"source": "**/*.@(jpg|jpeg|gif|png|svg|webp|woff|woff2|ttf|eot|ico)",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "max-age=3600"
+						}
+					]
+				},
+				{
+					"source": "**/flutter_service_worker.js",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "max-age=0, no-cache, must-revalidate"
+						}
+					]
+				},
+				{
+					"source": "**/main.dart.js",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "max-age=0, must-revalidate"
+						}
+					]
+				}
+			],
+			"rewrites": [
+				{
+					"source": "**",
+					"destination": "/index.html"
+				}
+			]
+		},
+		{
+			"target": "client",
+			"public": "build/web-client",
+			"ignore": [
+				"firebase.json",
+				"**/.*",
+				"**/node_modules/**"
+			],
+			"headers": [
+				{
+					"source": "**",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "no-cache, no-store, must-revalidate"
+						}
+					]
+				},
+				{
+					"source": "**/*.@(js|css|html)",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "max-age=0, must-revalidate"
+						}
+					]
+				},
+				{
+					"source": "**/*.@(jpg|jpeg|gif|png|svg|webp|woff|woff2|ttf|eot|ico)",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "max-age=3600"
+						}
+					]
+				},
+				{
+					"source": "**/flutter_service_worker.js",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "max-age=0, no-cache, must-revalidate"
+						}
+					]
+				},
+				{
+					"source": "**/main.dart.js",
+					"headers": [
+						{
+							"key": "Cache-Control",
+							"value": "max-age=0, must-revalidate"
+						}
+					]
+				}
+			],
+			"rewrites": [
+				{
+					"source": "**",
+					"destination": "/index.html"
+				}
+			]
+		}
+	]
+}

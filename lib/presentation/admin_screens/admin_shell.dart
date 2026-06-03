@@ -3,6 +3,7 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_zoom_drawer/flutter_zoom_drawer.dart';
 import 'package:hotel_management_system/presentation/admin_screens/dashboard_screen.dart';
+import 'package:hotel_management_system/state_management/app_providers.dart';
 import 'package:hotel_management_system/state_management/theme_provider.dart';
 
 class AdminShell extends ConsumerStatefulWidget {
@@ -18,6 +19,7 @@ class _AdminShellState extends ConsumerState<AdminShell> {
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width >= 800;
     final themeController = ref.watch(themeProvider);
+    final businessAccessAsync = ref.watch(tenantBusinessAccessProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -51,7 +53,59 @@ class _AdminShellState extends ConsumerState<AdminShell> {
         ],
       ),
 
-      body: DashboardScreen(),
+      body: businessAccessAsync.when(
+        skipLoadingOnReload: true,
+        skipLoadingOnRefresh: true,
+        data: (access) {
+          if (access.isBlocked) {
+            return _buildBusinessDisabledScreen(access.reason);
+          }
+          return const DashboardScreen();
+        },
+        loading: () => const DashboardScreen(),
+        error: (_, __) => const DashboardScreen(),
+      ),
+    );
+  }
+
+  Widget _buildBusinessDisabledScreen(String reason) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Card(
+          margin: const EdgeInsets.all(16),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.block_rounded,
+                  color: Theme.of(context).colorScheme.error,
+                  size: 56,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Business Disabled',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  reason,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Please contact DineFlowX team to reactivate your business.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

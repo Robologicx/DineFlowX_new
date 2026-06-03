@@ -2,6 +2,17 @@
   "projects": {
     "default": "dineflowx"
   },
-  "targets": {},
+  "targets": {
+    "dineflowx": {
+      "hosting": {
+        "main": [
+          "dineflowx"
+        ],
+        "client": [
+          "dineflowx-client"
+        ]
+      }
+    }
+  },
   "etags": {}
 }

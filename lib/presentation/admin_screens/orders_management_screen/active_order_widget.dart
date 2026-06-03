@@ -24,38 +24,6 @@ class ActiveOrdersWidget extends ConsumerStatefulWidget {
 
 class _ActiveOrdersWidgetState extends ConsumerState<ActiveOrdersWidget> {
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadActiveOrders();
-    });
-  }
-
-  void _loadActiveOrders() {
-    final tableNotifier = ref.read(
-      tableProvider((
-        businessId: widget.businessId,
-        branchId: widget.branchId,
-      )).notifier,
-    );
-
-    final orderNotifier = ref.read(
-      orderProvider((
-        businessId: widget.businessId,
-        branchId: widget.branchId,
-        tableNotifier: tableNotifier,
-      )).notifier,
-    );
-
-    // Load only active orders (pending, inProgress, ready)
-    orderNotifier.loadOrdersByStatus([
-      OrderStatus.pending,
-      OrderStatus.inProgress,
-      OrderStatus.ready,
-    ]);
-  }
-
-  @override
   Widget build(BuildContext context) {
     final tableNotifier = ref.read(
       tableProvider((
@@ -64,15 +32,28 @@ class _ActiveOrdersWidgetState extends ConsumerState<ActiveOrdersWidget> {
       )).notifier,
     );
 
-    final orderState = ref.watch(
-      orderProvider((
+    final ordersAsync = ref.watch(
+      todayOrdersStreamProvider((
         businessId: widget.businessId,
         branchId: widget.branchId,
         tableNotifier: tableNotifier,
       )),
     );
 
-    final activeOrders = orderState.orders.take(widget.maxOrders).toList();
+    final allOrders = ordersAsync.maybeWhen(
+      data: (orders) => orders,
+      orElse: () => const <OrderModel>[],
+    );
+
+    final activeOrders = allOrders
+        .where(
+          (order) =>
+              order.orderStatus == OrderStatus.pending ||
+              order.orderStatus == OrderStatus.inProgress ||
+              order.orderStatus == OrderStatus.ready,
+        )
+        .take(widget.maxOrders)
+        .toList();
 
     return Card(
       child: Column(
@@ -105,12 +86,12 @@ class _ActiveOrdersWidgetState extends ConsumerState<ActiveOrdersWidget> {
           ),
           const Divider(height: 1),
           // Content
-          if (orderState.isLoading)
+          if (ordersAsync.isLoading)
             const Padding(
               padding: EdgeInsets.all(32),
               child: Center(child: CircularProgressIndicator()),
             )
-          else if (orderState.error != null)
+          else if (ordersAsync.hasError)
             Padding(
               padding: const EdgeInsets.all(32),
               child: Center(
@@ -177,7 +158,7 @@ class _ActiveOrdersWidgetState extends ConsumerState<ActiveOrdersWidget> {
                 child: TextButton.icon(
                   onPressed: widget.onViewAll,
                   icon: const Icon(Icons.open_in_new),
-                  label: Text('View All Orders (${orderState.orders.length})'),
+                  label: Text('View All Orders (${allOrders.length})'),
                 ),
               ),
             ),
@@ -194,7 +175,7 @@ class _ActiveOrdersWidgetState extends ConsumerState<ActiveOrdersWidget> {
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          color: statusColor.withOpacity(0.2),
+          color: statusColor.withValues(alpha: 0.2),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Icon(

@@ -27,20 +27,48 @@ class ProductModel {
     this.reviewCount = 0,
   });
 
+  static DateTime _parseDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is String) {
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) return parsed;
+      final ms = int.tryParse(value);
+      if (ms != null) return DateTime.fromMillisecondsSinceEpoch(ms);
+    }
+    return DateTime.now();
+  }
+
+  static double _parseDouble(dynamic value, {double fallback = 0.0}) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? fallback;
+    return fallback;
+  }
+
+  static int _parseInt(dynamic value, {int fallback = 0}) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? fallback;
+    return fallback;
+  }
+
   // Firestore doc → Model
   factory ProductModel.fromMap(Map<String, dynamic> data, String documentId) {
     return ProductModel(
       productId: documentId,
-      name: data['name'] ?? '',
-      description: data['description'] ?? '',
-      imageUrl: data['imageUrl'],
-      price: (data['price'] ?? 0).toDouble(),
-      categoryId: data['categoryId'] ?? '',
-      isAvailable: data['isAvailable'] ?? true,
-      createdAt: (data['createdAt'] as Timestamp).toDate(),
-      updatedAt: (data['updatedAt'] as Timestamp).toDate(),
-      averageRating: (data['averageRating'] ?? 0.0).toDouble(),
-      reviewCount: data['reviewCount'] ?? 0,
+      name: (data['name'] ?? '').toString(),
+      description: (data['description'] ?? '').toString(),
+      imageUrl: data['imageUrl'] == null ? null : data['imageUrl'].toString(),
+      price: _parseDouble(data['price']),
+      categoryId: (data['categoryId'] ?? '').toString(),
+      isAvailable: data['isAvailable'] is bool
+          ? data['isAvailable'] as bool
+          : true,
+      createdAt: _parseDate(data['createdAt']),
+      updatedAt: _parseDate(data['updatedAt']),
+      averageRating: _parseDouble(data['averageRating']),
+      reviewCount: _parseInt(data['reviewCount']),
     );
   }
 

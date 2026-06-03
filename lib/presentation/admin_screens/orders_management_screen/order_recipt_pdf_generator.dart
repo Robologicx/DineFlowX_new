@@ -15,15 +15,10 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 
 class OrderPdfGenerator {
-  // Business Info - Modify these as needed
-  static const String businessName = 'DineFlowX';
-  // static const String businessAddress = 'Address Line 1, City, Country';
-  // static const String businessPhone = '+92 XXX XXXXXXX';
-  // static const String businessEmail = 'info@restaurant.com';
-
   // Tax rate (commented out for later use)
   // static const double taxRate = 0.16; // 16% tax
 
@@ -34,6 +29,15 @@ class OrderPdfGenerator {
     bool includeTax = false, // Set to true when you want to enable tax
   }) async {
     final pdf = pw.Document();
+    final business = await BusinessRepository().getBusinessById(
+      BusinessRepository.temporaryBusinesshId,
+    );
+    final businessName = business?.title.trim().isNotEmpty == true
+        ? business!.title.trim()
+        : 'Business';
+    final businessLogo = business?.logoUrl?.trim().isNotEmpty == true
+        ? await _tryLoadBusinessLogo(business!.logoUrl!.trim())
+        : null;
 
     // Calculate amounts
     final subtotal = order.totalAmount;
@@ -51,7 +55,10 @@ class OrderPdfGenerator {
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               // Header Section
-              _buildHeader(),
+              _buildHeader(
+                businessName: businessName,
+                businessLogo: businessLogo,
+              ),
               pw.SizedBox(height: 20),
               pw.Divider(thickness: 2),
               pw.SizedBox(height: 20),
@@ -68,7 +75,7 @@ class OrderPdfGenerator {
               _buildSummary(subtotal, grandTotal, includeTax),
               pw.SizedBox(height: 60),
               // Footer
-              _buildFooter(),
+              _buildFooter(businessName),
             ],
           );
         },
@@ -79,33 +86,19 @@ class OrderPdfGenerator {
   }
 
   /// Build header with logo and business info
-  static pw.Widget _buildHeader() {
+  static pw.Widget _buildHeader({
+    required String businessName,
+    pw.ImageProvider? businessLogo,
+  }) {
     return pw.Column(
       children: [
-        // Logo placeholder - Replace with actual logo
-        // pw.Container(
-        //   height: 60,
-        //   width: 60,
-        //   decoration: pw.BoxDecoration(
-        //     border: pw.Border.all(color: PdfColors.grey300),
-        //     borderRadius: pw.BorderRadius.circular(8),
-        //   ),
-        //   child: pw.Center(
-        //     child: pw.Text(
-        //       'LOGO',
-        //       style: pw.TextStyle(
-        //         fontSize: 12,
-        //         color: PdfColors.grey600,
-        //         fontWeight: pw.FontWeight.bold,
-        //       ),
-        //     ),
-        //   ),
-        //   // For actual logo, use:
-        //   // child: pw.Image(
-        //   //   pw.MemoryImage(logoBytes),
-        //   //   fit: pw.BoxFit.contain,
-        //   // ),
-        // ),
+        if (businessLogo != null)
+          pw.Container(
+            height: 56,
+            width: 56,
+            margin: const pw.EdgeInsets.only(bottom: 10),
+            child: pw.Image(businessLogo, fit: pw.BoxFit.contain),
+          ),
         pw.SizedBox(height: 10),
         pw.Text(
           businessName,
@@ -314,19 +307,16 @@ class OrderPdfGenerator {
   }
 
   /// Build footer section
-  static pw.Widget _buildFooter() {
+  static pw.Widget _buildFooter(String businessName) {
     return pw.Column(
       children: [
         pw.Divider(),
-        // pw.SizedBox(height: 10),
-        // pw.Text(
-        //   'Thank you for your order!',
-        //   style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
-        // ),
-
-        // pw.SizedBox(height: 10),
         pw.Text(
-          'Powered by ROBOLOGICX}',
+          'Thank you for your order!',
+          style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.Text(
+          businessName,
           style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
         ),
       ],
@@ -417,6 +407,14 @@ class OrderPdfGenerator {
         return PdfColors.orange;
       case OrderType.delivery:
         return PdfColors.green;
+    }
+  }
+
+  static Future<pw.ImageProvider?> _tryLoadBusinessLogo(String url) async {
+    try {
+      return await networkImage(url);
+    } catch (_) {
+      return null;
     }
   }
 

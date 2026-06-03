@@ -1,10 +1,17 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
+import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
 
 class TableRepository {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final String _businessId;
   final String _branchId;
+
+  String get businessId => _businessId;
+  String get branchId => _branchId;
 
   TableRepository({required String businessId, required String branchId})
     : _businessId = businessId,
@@ -17,38 +24,180 @@ class TableRepository {
       .doc(_branchId)
       .collection('diningTables');
 
+  List<TableModel> _mergeTablesPreferLocal({
+    required List<TableModel> local,
+    required List<TableModel> remote,
+  }) {
+    final merged = <String, TableModel>{};
+    for (final table in remote) {
+      merged[table.id] = table;
+    }
+    for (final table in local) {
+      merged[table.id] = table;
+    }
+
+    final list = merged.values.toList(growable: false);
+    list.sort((a, b) => a.tableNumber.compareTo(b.tableNumber));
+    return list;
+  }
+
+  List<TableModel> _localTablesFromRows(List<Map<String, dynamic>> rows) {
+    return rows.map((map) => TableModel.fromMap(map)).toList(growable: false);
+  }
+
+  List<TableModel> _applyTableFilter(
+    List<TableModel> tables, {
+    TableStatus? status,
+    String? roomId,
+    bool standaloneOnly = false,
+  }) {
+    Iterable<TableModel> result = tables;
+    if (status != null) {
+      result = result.where((t) => t.status == status);
+    }
+    if (standaloneOnly) {
+      result = result.where((t) => t.roomId == null || t.roomId!.isEmpty);
+    } else if (roomId != null) {
+      result = result.where((t) => t.roomId == roomId);
+    }
+    final list = result.toList(growable: false);
+    list.sort((a, b) => a.tableNumber.compareTo(b.tableNumber));
+    return list;
+  }
+
+  Stream<List<TableModel>> _hybridTablesStream({
+    TableStatus? status,
+    String? roomId,
+    bool standaloneOnly = false,
+  }) {
+    return Stream.multi((controller) {
+      List<TableModel> latestRemote = const [];
+      StreamSubscription<QuerySnapshot>? remoteSub;
+      Timer? localTick;
+      bool isCancelled = false;
+
+      Future<void> emitMerged() async {
+        if (isCancelled) return;
+        final localRows = await OfflineLocalReadService.instance
+            .getBranchCollection(
+              businessId: _businessId,
+              branchId: _branchId,
+              collectionName: 'diningTables',
+            );
+        if (isCancelled) return;
+
+        final localTables = _applyTableFilter(
+          _localTablesFromRows(localRows),
+          status: status,
+          roomId: roomId,
+          standaloneOnly: standaloneOnly,
+        );
+        final remoteTables = _applyTableFilter(
+          latestRemote,
+          status: status,
+          roomId: roomId,
+          standaloneOnly: standaloneOnly,
+        );
+        controller.add(
+          _mergeTablesPreferLocal(local: localTables, remote: remoteTables),
+        );
+      }
+
+      localTick = Timer.periodic(const Duration(seconds: 1), (_) {
+        unawaited(emitMerged());
+      });
+
+      remoteSub = _tablesRef.snapshots().listen(
+        (snapshot) {
+          latestRemote = snapshot.docs
+              .map((doc) => TableModel.fromFirestore(doc))
+              .toList(growable: false);
+          unawaited(emitMerged());
+        },
+        onError: (_) {
+          // Keep local polling active even if remote listener errors.
+        },
+      );
+
+      unawaited(emitMerged());
+
+      controller.onCancel = () {
+        isCancelled = true;
+        localTick?.cancel();
+        remoteSub?.cancel();
+      };
+    });
+  }
+
   // ---------- CRUD Operations ----------
 
   Future<void> createTable(TableModel table) async {
     final String newId = _tablesRef.doc().id;
     final map = table.toMap();
     map['id'] = newId;
-    await _tablesRef.doc(newId).set(map);
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/diningTables/$newId',
+      data: map,
+      merge: false,
+    );
   }
 
   Future<TableModel?> getTableById(String tableId) async {
+    final localDoc = await OfflineLocalReadService.instance.getBranchDocument(
+      businessId: _businessId,
+      branchId: _branchId,
+      collectionName: 'diningTables',
+      documentId: tableId,
+    );
+    if (localDoc != null) {
+      return TableModel.fromMap({...localDoc, 'id': tableId});
+    }
+
     final doc = await _tablesRef.doc(tableId).get();
     if (!doc.exists) return null;
     return TableModel.fromFirestore(doc);
   }
 
   Future<void> updateTable(TableModel table) async {
-    await _tablesRef.doc(table.id).update(table.toMap());
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/diningTables/${table.id}',
+      data: table.toMap(),
+      merge: true,
+    );
   }
 
   Future<void> deleteTable(String tableId) async {
-    await _tablesRef.doc(tableId).delete();
+    await OfflineFirestoreWriteQueueService.instance.deleteOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/diningTables/$tableId',
+    );
   }
 
   // ---------- Query Operations ----------
   Future<List<TableModel>> getAllTables() async {
     try {
-      final data = await _tablesRef.get();
-      print(data.docs.length);
-      if (data.docs.isEmpty) return [];
-      return data.docs
-          .map((doc) => TableModel.fromFirestore(doc))
-          .toList(growable: false);
+      final localRows = await OfflineLocalReadService.instance
+          .getBranchCollection(
+            businessId: _businessId,
+            branchId: _branchId,
+            collectionName: 'diningTables',
+          );
+      final localTables = _localTablesFromRows(localRows);
+
+      try {
+        final data = await _tablesRef.get();
+        final remoteTables = data.docs
+            .map((doc) => TableModel.fromFirestore(doc))
+            .toList(growable: false);
+        return _mergeTablesPreferLocal(
+          local: localTables,
+          remote: remoteTables,
+        );
+      } catch (_) {
+        return _applyTableFilter(localTables);
+      }
       // final query = await _tablesRef.orderBy('tableNumber').get();
       // return query.docs
       //     .map((doc) => TableModel.fromFirestore(doc))
@@ -60,13 +209,8 @@ class TableRepository {
 
   Future<List<TableModel>> getTablesByStatus(TableStatus status) async {
     try {
-      final query = await _tablesRef
-          .where('status', isEqualTo: status.name)
-          .orderBy('tableNumber')
-          .get();
-      return query.docs
-          .map((doc) => TableModel.fromFirestore(doc))
-          .toList(growable: false);
+      final all = await getAllTables();
+      return _applyTableFilter(all, status: status);
     } catch (e) {
       return [];
     }
@@ -74,13 +218,8 @@ class TableRepository {
 
   Future<List<TableModel>> getTablesByRoom(String roomId) async {
     try {
-      final query = await _tablesRef
-          .where('roomId', isEqualTo: roomId)
-          .orderBy('tableNumber')
-          .get();
-      return query.docs
-          .map((doc) => TableModel.fromFirestore(doc))
-          .toList(growable: false);
+      final all = await getAllTables();
+      return _applyTableFilter(all, roomId: roomId);
     } catch (e) {
       return [];
     }
@@ -88,13 +227,8 @@ class TableRepository {
 
   Future<List<TableModel>> getStandaloneTables() async {
     try {
-      final query = await _tablesRef
-          .where('roomId', isNull: true)
-          .orderBy('tableNumber')
-          .get();
-      return query.docs
-          .map((doc) => TableModel.fromFirestore(doc))
-          .toList(growable: false);
+      final all = await getAllTables();
+      return _applyTableFilter(all, standaloneOnly: true);
     } catch (e) {
       return [];
     }
@@ -115,13 +249,11 @@ class TableRepository {
     final prefix = searchTerm.trim().toLowerCase();
     if (prefix.isEmpty) return [];
     try {
-      final query = await _tablesRef
-          .where('tableNumber_lower', isGreaterThanOrEqualTo: prefix)
-          .where('tableNumber_lower', isLessThanOrEqualTo: '$prefix\uf8ff')
-          .limit(limit)
-          .get();
-
-      return query.docs.map((doc) => TableModel.fromFirestore(doc)).toList();
+      final all = await getAllTables();
+      return all
+          .where((table) => table.tableNumber.toLowerCase().contains(prefix))
+          .take(limit)
+          .toList(growable: false);
     } catch (e) {
       return [];
     }
@@ -129,17 +261,24 @@ class TableRepository {
 
   // ---------- Table Management Operations ----------
   Future<void> updateTableStatus(String tableId, TableStatus status) async {
-    await _tablesRef.doc(tableId).update({
-      'status': status.name,
-      'updatedAt': DateTime.now().toIso8601String(),
-    });
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/diningTables/$tableId',
+      data: {
+        'status': status.name,
+        'updatedAt': DateTime.now().toIso8601String(),
+      },
+      merge: true,
+    );
   }
 
   Future<void> assignTableToRoom(String tableId, String? roomId) async {
-    await _tablesRef.doc(tableId).update({
-      'roomId': roomId,
-      'updatedAt': DateTime.now().toIso8601String(),
-    });
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/diningTables/$tableId',
+      data: {'roomId': roomId, 'updatedAt': DateTime.now().toIso8601String()},
+      merge: true,
+    );
   }
 
   // ---------- Merge/Split Operations (Commented Out) ----------
@@ -189,45 +328,24 @@ class TableRepository {
   // ---------- Stream Operations ----------
 
   Stream<TableModel?> listenToTable(String tableId) {
-    return _tablesRef.doc(tableId).snapshots().map((doc) {
-      if (!doc.exists) return null;
-      return TableModel.fromFirestore(doc);
+    return _hybridTablesStream().map((tables) {
+      for (final table in tables) {
+        if (table.id == tableId) return table;
+      }
+      return null;
     });
   }
 
   Stream<List<TableModel>> listenToAllTables() {
-    return _tablesRef
-        .orderBy('tableNumber')
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => TableModel.fromFirestore(doc))
-              .toList(growable: false),
-        );
+    return _hybridTablesStream();
   }
 
   Stream<List<TableModel>> listenToTablesByStatus(TableStatus status) {
-    return _tablesRef
-        .where('status', isEqualTo: status.name)
-        .orderBy('tableNumber')
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => TableModel.fromFirestore(doc))
-              .toList(growable: false),
-        );
+    return _hybridTablesStream(status: status);
   }
 
   Stream<List<TableModel>> listenToTablesByRoom(String roomId) {
-    return _tablesRef
-        .where('roomId', isEqualTo: roomId)
-        .orderBy('tableNumber')
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => TableModel.fromFirestore(doc))
-              .toList(growable: false),
-        );
+    return _hybridTablesStream(roomId: roomId);
   }
 
   // ---------- Validation ----------

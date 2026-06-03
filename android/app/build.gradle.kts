@@ -10,7 +10,7 @@ plugins {
 
 android {
     namespace = "com.example.hotel_management_system"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
 
     ndkVersion = "27.0.12077973" // <-- This is fine
 
@@ -26,7 +26,7 @@ android {
     defaultConfig {
         applicationId = "com.example.hotel_management_system"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion // ✅ FIXED
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

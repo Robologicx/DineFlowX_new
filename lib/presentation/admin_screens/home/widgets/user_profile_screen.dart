@@ -1,12 +1,21 @@
-// user_profile_screen.dart
-import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:file_picker/file_picker.dart' as fp;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 // import 'package:image_picker/image_picker.dart';
+import 'package:hotel_management_system/data/models/buisness_model.dart';
 import 'package:hotel_management_system/data/models/user_model.dart';
+import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
+import 'package:hotel_management_system/data/repositories/images_storage_repository.dart'
+    show StorageRepository;
+import 'package:hotel_management_system/data/services/image_storage_service.dart';
 import 'package:hotel_management_system/presentation/client_screens/widgets/app_error_widget.dart';
 import 'package:hotel_management_system/presentation/client_screens/widgets/loading_indicator.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
+import 'package:hotel_management_system/state_management/current_tenant_business_provider.dart';
 
 class UserProfileScreen extends ConsumerStatefulWidget {
   const UserProfileScreen({super.key});
@@ -21,10 +30,13 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _imageUrlController = TextEditingController();
+  final _businessNameController = TextEditingController();
+  final _businessLogoUrlController = TextEditingController();
+  final StorageService _storageService = StorageService(StorageRepository());
+  final Set<String> _ensuredPublicKeyBusinessIds = <String>{};
 
   bool _isEditing = false;
   bool _isSaving = false;
-  File? _selectedImage;
   // final ImagePicker _picker = ImagePicker();
 
   @override
@@ -44,6 +56,8 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
     _emailController.dispose();
     _phoneController.dispose();
     _imageUrlController.dispose();
+    _businessNameController.dispose();
+    _businessLogoUrlController.dispose();
     super.dispose();
   }
 
@@ -54,28 +68,133 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
     _imageUrlController.text = user.profileImageUrl ?? '';
   }
 
-  Future<void> _pickImage() async {
-    try {
-      // final XFile? image = await _picker.pickImage(
-      //   source: ImageSource.gallery,
-      //   maxWidth: 800,
-      //   maxHeight: 800,
-      //   imageQuality: 85,
-      // );
+  bool _canManageBusinessBrand(UserModel user) {
+    final roleName = user.role.name.trim().toLowerCase();
+    return roleName == 'owner' || roleName.contains('admin');
+  }
 
-      // if (image != null) {
-      //   setState(() {
-      //     _selectedImage = File(image.path);
-      //   });
-      // }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error picking image: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+  String _resolveBrandingBranchId() {
+    final currentUser = ref.read(userProvider).selectedUser;
+    final currentBranchId = currentUser?.primaryBranchId.trim() ?? '';
+    if (currentBranchId.isNotEmpty) {
+      return currentBranchId;
     }
+
+    final fallbackBranchId = BusinessRepository.temporaryBranchId.trim();
+    if (fallbackBranchId.isNotEmpty) {
+      return fallbackBranchId;
+    }
+
+    return 'branch1';
+  }
+
+  String _normalizeLogoExtension(fp.PlatformFile file) {
+    final rawExtension = (file.extension ?? '').trim().toLowerCase();
+    if (rawExtension.isNotEmpty) {
+      return rawExtension;
+    }
+
+    final fileName = file.name.trim().toLowerCase();
+    if (fileName.contains('.')) {
+      return fileName.split('.').last;
+    }
+
+    return 'png';
+  }
+
+  CircleAvatar _buildBusinessLogoAvatar({
+    required String businessName,
+    String? logoUrl,
+    Uint8List? previewBytes,
+    double radius = 28,
+  }) {
+    final normalizedLogoUrl = logoUrl?.trim();
+    final ImageProvider? imageProvider;
+    if (previewBytes != null && previewBytes.isNotEmpty) {
+      imageProvider = MemoryImage(previewBytes);
+    } else if (normalizedLogoUrl != null && normalizedLogoUrl.isNotEmpty) {
+      imageProvider = NetworkImage(normalizedLogoUrl);
+    } else {
+      imageProvider = null;
+    }
+
+    final fallbackInitial = businessName.trim().isNotEmpty
+        ? businessName.trim()[0].toUpperCase()
+        : 'B';
+
+    return CircleAvatar(
+      radius: radius,
+      foregroundImage: imageProvider,
+      onForegroundImageError: imageProvider == null ? null : (_, __) {},
+      child: Text(
+        fallbackInitial,
+        style: TextStyle(fontWeight: FontWeight.bold, fontSize: radius * 0.7),
+      ),
+    );
+  }
+
+  String _toPublicSlug(String value) {
+    final lower = value
+        .trim()
+        .toLowerCase()
+        .replaceAll('&', ' and ')
+        .replaceAll('+', ' and ');
+    final buffer = StringBuffer();
+
+    for (final codeUnit in lower.codeUnits) {
+      final isAlphaNum =
+          (codeUnit >= 48 && codeUnit <= 57) ||
+          (codeUnit >= 97 && codeUnit <= 122);
+      if (isAlphaNum) {
+        buffer.writeCharCode(codeUnit);
+      }
+    }
+
+    return buffer.toString();
+  }
+
+  String _buildPublicClientOrderingLink(BusinessModel business) {
+    final businessKey = Uri.encodeComponent(business.id.trim());
+    return 'https://dineflowx-client.web.app/$businessKey';
+  }
+
+  Future<void> _ensurePublicBusinessKey(BusinessModel business) async {
+    final businessId = business.id.trim();
+    if (businessId.isEmpty ||
+        _ensuredPublicKeyBusinessIds.contains(businessId)) {
+      return;
+    }
+
+    final titleSlug = _toPublicSlug(business.title);
+    if (titleSlug.isEmpty) {
+      _ensuredPublicKeyBusinessIds.add(businessId);
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('public_business_keys')
+          .doc(titleSlug)
+          .set({
+            'businessId': businessId,
+            'key': titleSlug,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+      _ensuredPublicKeyBusinessIds.add(businessId);
+    } catch (_) {
+      // Ignore mapping write failures; the link still includes direct business-id fallback path.
+    }
+  }
+
+  Future<void> _copyOrderingLink(String link) async {
+    await Clipboard.setData(ClipboardData(text: link));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Client ordering link copied.'),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   Future<void> _saveProfile() async {
@@ -105,7 +224,6 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
       setState(() {
         _isEditing = false;
         _isSaving = false;
-        _selectedImage = null;
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -144,6 +262,7 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
   Widget build(BuildContext context) {
     final userState = ref.watch(userProvider);
     final userNotifier = ref.read(userProvider.notifier);
+    final businessAsync = ref.watch(currentTenantBusinessProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -161,7 +280,6 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
               onPressed: () {
                 setState(() {
                   _isEditing = false;
-                  _selectedImage = null;
                   if (userState.selectedUser != null) {
                     _populateFields(userState.selectedUser!);
                   }
@@ -232,6 +350,7 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
   }
 
   Widget _buildProfileContent(UserModel user) {
+    final businessAsync = ref.watch(currentTenantBusinessProvider);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Form(
@@ -246,6 +365,11 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
             // Basic Information
             _buildBasicInfoSection(user),
             const SizedBox(height: 24),
+
+            if (_canManageBusinessBrand(user)) ...[
+              _buildBusinessBrandSection(businessAsync),
+              const SizedBox(height: 24),
+            ],
 
             // Role Information
             _buildRoleSection(user),
@@ -263,6 +387,439 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
     );
   }
 
+  Widget _buildBusinessBrandSection(AsyncValue<BusinessModel?> businessAsync) {
+    return businessAsync.when(
+      data: (business) {
+        if (business == null) {
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Business Branding',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          ref.invalidate(currentTenantBusinessProvider);
+                        },
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Reload'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Business details are still loading. Tap Reload, then Manage to upload logo.',
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        final orderingLink = _buildPublicClientOrderingLink(business);
+        _ensurePublicBusinessKey(business);
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Business Branding',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => _showBusinessBrandDialog(business),
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('Manage'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: _buildBusinessLogoAvatar(
+                    businessName: business.title,
+                    logoUrl: business.logoUrl,
+                  ),
+                  title: Text(business.title),
+                  subtitle: Text(
+                    business.logoUrl?.isNotEmpty == true
+                        ? business.logoUrl!
+                        : 'No business logo set',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Online Ordering Link',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: SelectableText(orderingLink),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton.icon(
+                    onPressed: () => _copyOrderingLink(orderingLink),
+                    icon: const Icon(Icons.copy_outlined),
+                    label: const Text('Copy Link'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+      loading: () => const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ),
+      error: (error, _) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text('Failed to load business branding: $error'),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showBusinessBrandDialog(BusinessModel business) async {
+    _businessNameController.text = business.title;
+    _businessLogoUrlController.text = business.logoUrl ?? '';
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        var isSavingBrand = false;
+        var isUploadingLogo = false;
+        Uint8List? selectedLogoBytes;
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            Future<void> uploadLogoFromDevice() async {
+              try {
+                final result = await fp.FilePicker.platform.pickFiles(
+                  type: fp.FileType.custom,
+                  allowedExtensions: const ['png', 'jpg', 'jpeg', 'webp'],
+                  withData: true,
+                );
+                if (result == null || result.files.isEmpty) {
+                  return;
+                }
+
+                final pickedFile = result.files.single;
+                final bytes = pickedFile.bytes;
+                if (bytes == null || bytes.isEmpty) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Unable to read the selected logo file.'),
+                    ),
+                  );
+                  return;
+                }
+
+                if (bytes.length > 5 * 1024 * 1024) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Logo must be 5 MB or smaller.'),
+                    ),
+                  );
+                  return;
+                }
+
+                setDialogState(() {
+                  isUploadingLogo = true;
+                  selectedLogoBytes = bytes;
+                });
+
+                final currentLogoUrl = _businessLogoUrlController.text.trim();
+                final uploadedUrl = currentLogoUrl.isNotEmpty
+                    ? await _storageService.updateRestaurantLogo(
+                        businessId: business.id,
+                        branchId: _resolveBrandingBranchId(),
+                        imageBytes: bytes,
+                        fileExtension: _normalizeLogoExtension(pickedFile),
+                        oldImageUrl: currentLogoUrl,
+                      )
+                    : await _storageService.uploadRestaurantLogo(
+                        businessId: business.id,
+                        branchId: _resolveBrandingBranchId(),
+                        imageBytes: bytes,
+                        fileExtension: _normalizeLogoExtension(pickedFile),
+                      );
+
+                await BusinessRepository().updateBusiness(
+                  business.copyWith(
+                    logoUrl: uploadedUrl,
+                    updatedAt: DateTime.now(),
+                  ),
+                );
+                _businessLogoUrlController.text = uploadedUrl;
+                if (!mounted) return;
+                setDialogState(() {
+                  isUploadingLogo = false;
+                });
+                ref.invalidate(currentTenantBusinessProvider);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Business logo uploaded successfully.'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                setDialogState(() {
+                  isUploadingLogo = false;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to upload logo: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Manage Business Branding'),
+              content: SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildBusinessLogoAvatar(
+                        businessName:
+                            _businessNameController.text.trim().isEmpty
+                            ? business.title
+                            : _businessNameController.text.trim(),
+                        logoUrl: _businessLogoUrlController.text.trim(),
+                        previewBytes: selectedLogoBytes,
+                        radius: 38,
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        alignment: WrapAlignment.center,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: isUploadingLogo
+                                ? null
+                                : uploadLogoFromDevice,
+                            icon: isUploadingLogo
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.upload_file_outlined),
+                            label: Text(
+                              isUploadingLogo ? 'Uploading...' : 'Upload Logo',
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: isUploadingLogo
+                                ? null
+                                : () async {
+                                    final currentLogoUrl =
+                                        _businessLogoUrlController.text.trim();
+
+                                    setDialogState(() {
+                                      isUploadingLogo = true;
+                                      selectedLogoBytes = null;
+                                    });
+
+                                    try {
+                                      if (currentLogoUrl.isNotEmpty) {
+                                        await _storageService
+                                            .deleteRestaurantLogo(
+                                              currentLogoUrl,
+                                            );
+                                      }
+
+                                      await BusinessRepository().updateBusiness(
+                                        business.copyWith(
+                                          logoUrl: null,
+                                          updatedAt: DateTime.now(),
+                                        ),
+                                      );
+
+                                      if (!mounted) return;
+                                      setDialogState(() {
+                                        isUploadingLogo = false;
+                                        _businessLogoUrlController.clear();
+                                      });
+                                      ref.invalidate(
+                                        currentTenantBusinessProvider,
+                                      );
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Business logo removed successfully.',
+                                          ),
+                                          backgroundColor: Colors.green,
+                                        ),
+                                      );
+                                    } catch (e) {
+                                      if (!mounted) return;
+                                      setDialogState(() {
+                                        isUploadingLogo = false;
+                                      });
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Failed to remove logo: $e',
+                                          ),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                    }
+                                  },
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Remove Logo'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Upload from your device to store the logo in Cloud Storage.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _businessNameController,
+                        onChanged: (_) => setDialogState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: 'Business Name',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _businessLogoUrlController,
+                        onChanged: (_) => setDialogState(() {
+                          selectedLogoBytes = null;
+                        }),
+                        decoration: const InputDecoration(
+                          labelText: 'Business Logo URL',
+                          border: OutlineInputBorder(),
+                          hintText: 'https://example.com/logo.png',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: isSavingBrand || isUploadingLogo
+                      ? null
+                      : () async {
+                          final trimmedName = _businessNameController.text
+                              .trim();
+                          if (trimmedName.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Business name is required.'),
+                              ),
+                            );
+                            return;
+                          }
+
+                          setDialogState(() => isSavingBrand = true);
+                          try {
+                            final updatedBusiness = business.copyWith(
+                              title: trimmedName,
+                              logoUrl:
+                                  _businessLogoUrlController.text.trim().isEmpty
+                                  ? null
+                                  : _businessLogoUrlController.text.trim(),
+                              updatedAt: DateTime.now(),
+                            );
+                            await BusinessRepository().updateBusiness(
+                              updatedBusiness,
+                            );
+                            if (!mounted) return;
+                            Navigator.of(dialogContext).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Business branding updated.'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          } catch (e) {
+                            if (!mounted) return;
+                            setDialogState(() => isSavingBrand = false);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Failed to update branding: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        },
+                  child: isSavingBrand
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildProfileImageSection(UserModel user) {
     return Card(
       child: Padding(
@@ -273,15 +830,10 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
             CircleAvatar(
               radius: 60,
               backgroundColor: Colors.grey[200],
-              backgroundImage: _selectedImage != null
-                  ? FileImage(_selectedImage!)
-                  : (user.profileImageUrl?.isNotEmpty == true
-                            ? NetworkImage(user.profileImageUrl!)
-                            : null)
-                        as ImageProvider?,
-              child:
-                  _selectedImage == null &&
-                      (user.profileImageUrl?.isEmpty != false)
+              backgroundImage: user.profileImageUrl?.isNotEmpty == true
+                  ? NetworkImage(user.profileImageUrl!)
+                  : null,
+              child: (user.profileImageUrl?.isEmpty != false)
                   ? Text(
                       user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U',
                       style: const TextStyle(

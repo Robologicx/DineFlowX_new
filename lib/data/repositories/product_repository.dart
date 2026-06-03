@@ -1,4 +1,5 @@
 ﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
 import '../models/product_model.dart';
 
 // whereIn (for favourites) → max 10 IDs per query. If you expect more, I can also code a batched fetch loop.
@@ -99,7 +100,13 @@ class ProductRepository {
   /// 4️⃣ Update a product (Admin/Owner only)
   Future<void> updateProduct(ProductModel product) async {
     try {
-      await _productsRef.doc(product.productId).update(product.toMap());
+      final documentPath =
+          'businesses/$_businessId/branches/$_branchId/products/${product.productId}';
+      await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+        documentPath: documentPath,
+        data: product.toMap(),
+        merge: true,
+      );
     } catch (e) {
       throw Exception("Error updating product: $e");
     }
@@ -181,7 +188,13 @@ class ProductRepository {
       final docId = product.productId.trim().isEmpty
           ? _productsRef.doc().id
           : product.productId;
-      await _productsRef.doc(docId).set(product.toMap());
+      final documentPath =
+          'businesses/$_businessId/branches/$_branchId/products/$docId';
+      await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+        documentPath: documentPath,
+        data: product.toMap(),
+        merge: false,
+      );
       return ProductModel(
         productId: docId,
         name: product.name,
@@ -203,7 +216,10 @@ class ProductRepository {
   /// 8️⃣ Delete product by ID
   Future<void> deleteProduct(String productId) async {
     try {
-      await _productsRef.doc(productId).delete();
+      await OfflineFirestoreWriteQueueService.instance.deleteOrQueue(
+        documentPath:
+            'businesses/$_businessId/branches/$_branchId/products/$productId',
+      );
     } catch (e) {
       throw Exception("Error deleting product: $e");
     }

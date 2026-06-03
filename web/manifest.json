@@ -1,11 +1,11 @@
 {
-    "name": "dineflowx",
-    "short_name": "dineflowx",
+    "name": "DineFlowX",
+    "short_name": "DineFlowX",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "DineFlowX - Restaurant operations and ordering platform.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
