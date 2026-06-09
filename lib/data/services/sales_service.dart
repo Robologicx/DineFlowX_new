@@ -17,6 +17,21 @@ class SalesService {
   }) : _repository = salesRepository,
        _expenseRepository = expenseRepository;
 
+  Future<(DateTime, DateTime)> getCurrentBusinessDayRange() async {
+    final now = DateTime.now();
+    final marker = await _repository.getCurrentBusinessDayStartAt();
+    if (marker != null) {
+      return (marker.toLocal(), now);
+    }
+
+    // Backward-compatible fallback if marker is not initialized yet.
+    final fourAmToday = DateTime(now.year, now.month, now.day, 4);
+    if (now.isBefore(fourAmToday)) {
+      return (fourAmToday.subtract(const Duration(days: 1)), now);
+    }
+    return (fourAmToday, now);
+  }
+
   /// Generate complete sales report for given date range
   Future<SalesReport> generateSalesReport({
     required DateTime startDate,
@@ -87,6 +102,80 @@ class SalesService {
     } catch (e) {
       throw Exception('Failed to generate sales report: $e');
     }
+  }
+
+  Future<SalesReport> generateCurrentBusinessDayReport() async {
+    final marker = await _repository.getCurrentBusinessDayStartAt();
+    if (marker == null) {
+      final range = await getCurrentBusinessDayRange();
+      return generateSalesReport(
+        startDate: range.$1,
+        endDate: range.$2,
+        period: ReportPeriod.today,
+      );
+    }
+
+    final completedOrders = await _repository.getOrdersForBusinessDayStart(
+      businessDayStartAt: marker,
+      statuses: [
+        OrderStatus.completed,
+        OrderStatus.pending,
+        OrderStatus.inProgress,
+      ],
+    );
+
+    final cancelledOrders = await _repository.getOrdersForBusinessDayStart(
+      businessDayStartAt: marker,
+      statuses: [OrderStatus.cancelled, OrderStatus.refunded],
+    );
+
+    final allCurrentDayOrders = await _repository.getOrdersForBusinessDayStart(
+      businessDayStartAt: marker,
+    );
+
+    final totalRevenue = _calculateTotalRevenue(completedOrders);
+    final totalOrders = completedOrders.length;
+    final averageOrderValue = _calculateAverageOrderValue(completedOrders);
+    final ordersByType = _calculateOrderTypeBreakdown(completedOrders);
+    final topProducts = _calculateTopProducts(completedOrders);
+    final refundedAmount = _calculateRefundedAmount(cancelledOrders);
+
+    final ordersByStatus = <OrderStatus, int>{
+      for (final status in OrderStatus.values)
+        status: allCurrentDayOrders
+            .where((order) => order.orderStatus == status)
+            .length,
+    };
+
+    final expenses = await _expenseRepository.getCurrentBusinessDayExpenses(
+      marker,
+    );
+    final totalExpenses = expenses.fold<double>(
+      0.0,
+      (sum, expense) => sum + expense.amount,
+    );
+    final profitOrLoss = totalRevenue - totalExpenses;
+
+    final revenueByDay = <String, double>{
+      '${marker.day}/${marker.month}': totalRevenue,
+    };
+
+    return SalesReport(
+      totalRevenue: totalRevenue,
+      totalOrders: totalOrders,
+      averageOrderValue: averageOrderValue,
+      ordersByType: ordersByType,
+      ordersByStatus: ordersByStatus,
+      topProducts: topProducts,
+      startDate: marker.toLocal(),
+      endDate: DateTime.now(),
+      period: ReportPeriod.today,
+      cancelledOrders: cancelledOrders.length,
+      refundedAmount: refundedAmount,
+      revenueByDay: revenueByDay,
+      totalExpenses: totalExpenses,
+      profitOrLoss: profitOrLoss,
+    );
   }
 
   /// Calculate total revenue from completed orders

@@ -28,8 +28,23 @@ class ExpenseState {
 
 class ExpenseNotifier extends StateNotifier<ExpenseState> {
   final ExpenseService _service;
+  bool _isAddingExpense = false;
 
   ExpenseNotifier(this._service) : super(const ExpenseState());
+
+  bool _isDuplicateExpense(ExpenseModel a, ExpenseModel b) {
+    final sameDay =
+        a.expenseDate.year == b.expenseDate.year &&
+        a.expenseDate.month == b.expenseDate.month &&
+        a.expenseDate.day == b.expenseDate.day;
+
+    return a.title.trim().toLowerCase() == b.title.trim().toLowerCase() &&
+        a.category.trim().toLowerCase() == b.category.trim().toLowerCase() &&
+        a.amount == b.amount &&
+        (a.note ?? '').trim().toLowerCase() ==
+            (b.note ?? '').trim().toLowerCase() &&
+        sameDay;
+  }
 
   Future<void> loadAllExpenses() async {
     state = state.copyWith(isLoading: true, error: null);
@@ -58,12 +73,31 @@ class ExpenseNotifier extends StateNotifier<ExpenseState> {
   }
 
   Future<void> addExpense(ExpenseModel expense) async {
+    if (_isAddingExpense) {
+      return;
+    }
+
+    final hasDuplicate = state.expenses.any(
+      (existing) => _isDuplicateExpense(existing, expense),
+    );
+
+    if (hasDuplicate) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'This expense already exists.',
+      );
+      return;
+    }
+
+    _isAddingExpense = true;
     state = state.copyWith(isLoading: true, error: null);
     try {
       await _service.addExpense(expense);
       await loadAllExpenses();
     } catch (e) {
       state = state.copyWith(error: e.toString(), isLoading: false);
+    } finally {
+      _isAddingExpense = false;
     }
   }
 

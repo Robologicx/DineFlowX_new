@@ -1,5 +1,6 @@
-package com.example.hotel_management_system
+package com.dineflowx.app
 
 import io.flutter.embedding.android.FlutterActivity
 
 class MainActivity : FlutterActivity()
+

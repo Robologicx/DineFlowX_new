@@ -25,48 +25,65 @@ class SalesDashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
-  late String businessId;
-  late String branchId;
+  // Parameters for the family provider - holds businessId and branchId as a record.
+  // Keep nullable because user state may not be ready during first refresh build.
+  ({String businessId, String branchId})? salesParams;
 
-  // Parameters for the family provider - holds businessId and branchId as a record
-  late final ({String businessId, String branchId}) salesParams;
+  ({String businessId, String branchId}) get _salesParams => salesParams!;
 
   @override
   void initState() {
     super.initState();
+    _initializeSalesParams();
+  }
+
+  void _initializeSalesParams() {
     // Retrieve the currently logged-in user from the userProvider
     // This user contains the primary branch and business IDs
     final user = ref.read(userProvider).selectedUser;
 
     // Safety checks to ensure user has valid business and branch IDs
     // Usually handled by user authentication flow, but we validate here for robustness
-    if (user?.primaryBranchId == null || user?.primarybusinessId == null) {
+    if (user == null ||
+        user.primaryBranchId.trim().isEmpty ||
+        user.primarybusinessId.trim().isEmpty) {
       // Handle missing IDs case - could navigate back or show error
       return;
     }
 
-    // Extract branch and business IDs from authenticated user
-    branchId = user!.primaryBranchId;
-    businessId = user.primarybusinessId;
-
     // Initialize the params record for the sales provider family
     // This record is used as a key to fetch branch-specific sales reports
-    salesParams = (businessId: businessId, branchId: branchId);
+    salesParams = (
+      businessId: user.primarybusinessId,
+      branchId: user.primaryBranchId,
+    );
 
     // Use addPostFrameCallback to ensure widget is fully built before triggering data fetch
     // Load initial report (today's sales) on screen initialization
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (salesParams == null) return;
       ref
-          .read(salesProvider(salesParams).notifier)
+          .read(salesProvider(_salesParams).notifier)
           .generateReport(ReportPeriod.today);
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    if (salesParams == null) {
+      _initializeSalesParams();
+    }
+
+    if (salesParams == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Sales Dashboard')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     // Watch the sales state to rebuild when report data changes
     // This observes: isLoading, error, currentReport, selectedPeriod, custom dates
-    final salesState = ref.watch(salesProvider(salesParams));
+    final salesState = ref.watch(salesProvider(_salesParams));
     final report = salesState.currentReport;
 
     return Scaffold(
@@ -141,7 +158,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
       /// Callback when user selects a preset period (Today, Week, Month, etc.)
       onPeriodSelected: (period) async {
         // Trigger report generation via the Notifier for selected period
-        ref.read(salesProvider(salesParams).notifier).generateReport(period);
+        ref.read(salesProvider(_salesParams).notifier).generateReport(period);
 
         // Wait for the state to update with new report data (async operation)
         // This ensures SnackBar shows AFTER screen values are updated with latest data
@@ -149,7 +166,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
 
         // Check if widget is still mounted before showing SnackBar (avoid memory leaks)
         if (mounted) {
-          final state = ref.read(salesProvider(salesParams));
+          final state = ref.read(salesProvider(_salesParams));
           // Only show success message if report was successfully generated
           if (state.currentReport != null) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -189,7 +206,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
         ///////////////////edit by hamza//////
         // Trigger custom report generation via the Notifier with selected date range
         ref
-            .read(salesProvider(salesParams).notifier)
+            .read(salesProvider(_salesParams).notifier)
             .generateCustomReport(s, e);
 
         // Wait for the state to update with new report data (async operation)
@@ -198,7 +215,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
 
         // Check if widget is still mounted before showing SnackBar (avoid memory leaks)
         if (mounted) {
-          final state = ref.read(salesProvider(salesParams));
+          final state = ref.read(salesProvider(_salesParams));
           // Only show success message if report was successfully generated
           if (state.currentReport != null) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -273,8 +290,8 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
   /// Re-fetches the report for the currently selected time period or custom date range
   void _refreshReport() {
     // Read the current state to get selected period or custom dates
-    final state = ref.read(salesProvider(salesParams));
-    final notifier = ref.read(salesProvider(salesParams).notifier);
+    final state = ref.read(salesProvider(_salesParams));
+    final notifier = ref.read(salesProvider(_salesParams).notifier);
 
     // Check if user selected a custom date range or a preset period
     if (state.selectedPeriod == ReportPeriod.custom) {
@@ -506,7 +523,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
   /// Generates PDF from current report and allows user to share/save it
   void _exportReport() async {
     // Get current state and report data
-    final state = ref.read(salesProvider(salesParams));
+    final state = ref.read(salesProvider(_salesParams));
     final report = state.currentReport;
 
     // Validate that report data exists before export

@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:hotel_management_system/data/models/close_day_report.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
 import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
@@ -43,6 +47,7 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
   bool canChangeDiningTable = false;
   bool canViewAllOrders = false;
   bool _showAllOrders = false;
+  bool _isClosingDay = false;
 
   Set<OrderStatus> _selectedStatuses = {
     OrderStatus.pending,
@@ -102,6 +107,13 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final currentDayStartAtAsync = ref.watch(
+      currentDayStartAtProvider((
+        branchId: branchId,
+        businessId: businessId,
+        tableNotifier: tableNotifier,
+      )),
+    );
     final ordersAsync = _showAllOrders
         ? ref.watch(
             allOrdersStreamProvider((
@@ -208,6 +220,11 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
         centerTitle: true,
         elevation: 0,
         actions: [
+          IconButton(
+            onPressed: _isClosingDay ? null : _handleCloseDay,
+            icon: const Icon(Icons.event_busy),
+            tooltip: 'Close Day',
+          ),
           TextButton.icon(
             onPressed: _toggleOrderScope,
             icon: Icon(_showAllOrders ? Icons.today : Icons.history),
@@ -228,6 +245,26 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: currentDayStartAtAsync.when(
+                data: (startAt) => Text(
+                  'Current Business Day: ${_formatBusinessDayDateTime(startAt.toLocal())}',
+                  style: theme.textTheme.bodySmall,
+                ),
+                loading: () => Text(
+                  'Current Business Day: loading...',
+                  style: theme.textTheme.bodySmall,
+                ),
+                error: (_, __) => Text(
+                  'Current Business Day: unavailable',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ),
+          ),
           // Search and Filter Bar
           Padding(
             padding: const EdgeInsets.all(16.0),
@@ -319,6 +356,177 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
               label: const Text('New Order'),
             )
           : null,
+    );
+  }
+
+  String _formatBusinessDayDateTime(DateTime value) {
+    final year = value.year.toString().padLeft(4, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    final hour = value.hour.toString().padLeft(2, '0');
+    final minute = value.minute.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute';
+  }
+
+  Future<void> _handleCloseDay() async {
+    final shouldClose =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Close Day'),
+              content: const Text(
+                'This will close the current business day and start a new one. Continue?',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Close Day'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    if (!shouldClose || !mounted) return;
+
+    final selectedUser = ref.read(userProvider).selectedUser;
+    setState(() => _isClosingDay = true);
+    try {
+      final closeDayRequest = (
+        businessId: businessId,
+        branchId: branchId,
+        tableNotifier: tableNotifier,
+        closedBy: selectedUser?.uid,
+      );
+      ref.invalidate(closeCurrentDayReportProvider(closeDayRequest));
+      final report = await ref.read(
+        closeCurrentDayReportProvider(closeDayRequest).future,
+      );
+
+      if (!mounted) return;
+      await _showCloseDayReportDialog(report);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to close day: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _isClosingDay = false);
+      }
+    }
+  }
+
+  String _fmtMoney(double value) => value.toStringAsFixed(2);
+
+  Future<void> _showCloseDayReportDialog(CloseDayReport report) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Day Closed Report'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Start: ${_formatBusinessDayDateTime(report.dayStartAt.toLocal())}',
+                  ),
+                  Text(
+                    'Closed: ${_formatBusinessDayDateTime(report.dayClosedAt.toLocal())}',
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Total Orders: ${report.totalOrders}'),
+                  Text('Completed: ${report.completedOrders}'),
+                  Text('Pending: ${report.pendingOrders}'),
+                  Text('In Progress: ${report.inProgressOrders}'),
+                  Text('Cancelled: ${report.cancelledOrders}'),
+                  Text('Refunded: ${report.refundedOrders}'),
+                  const Divider(height: 24),
+                  Text('Total Amount: Rs ${_fmtMoney(report.totalAmount)}'),
+                  Text('Total Expenses: Rs ${_fmtMoney(report.totalExpenses)}'),
+                  Text(
+                    'Cash In Hand After Expense: Rs ${_fmtMoney(report.cashInHandAfterExpenses)}',
+                  ),
+                  Text('Profit / Loss: Rs ${_fmtMoney(report.profitOrLoss)}'),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                final pdf = pw.Document();
+                pdf.addPage(
+                  pw.Page(
+                    pageFormat: PdfPageFormat.a4,
+                    build: (context) {
+                      return pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text(
+                            'Close Day Report',
+                            style: pw.TextStyle(
+                              fontSize: 20,
+                              fontWeight: pw.FontWeight.bold,
+                            ),
+                          ),
+                          pw.SizedBox(height: 12),
+                          pw.Text(
+                            'Start: ${_formatBusinessDayDateTime(report.dayStartAt.toLocal())}',
+                          ),
+                          pw.Text(
+                            'Closed: ${_formatBusinessDayDateTime(report.dayClosedAt.toLocal())}',
+                          ),
+                          pw.SizedBox(height: 12),
+                          pw.Text('Total Orders: ${report.totalOrders}'),
+                          pw.Text('Completed: ${report.completedOrders}'),
+                          pw.Text('Pending: ${report.pendingOrders}'),
+                          pw.Text('In Progress: ${report.inProgressOrders}'),
+                          pw.Text('Cancelled: ${report.cancelledOrders}'),
+                          pw.Text('Refunded: ${report.refundedOrders}'),
+                          pw.SizedBox(height: 12),
+                          pw.Text(
+                            'Total Amount: Rs ${_fmtMoney(report.totalAmount)}',
+                          ),
+                          pw.Text(
+                            'Total Expenses: Rs ${_fmtMoney(report.totalExpenses)}',
+                          ),
+                          pw.Text(
+                            'Cash In Hand After Expense: Rs ${_fmtMoney(report.cashInHandAfterExpenses)}',
+                          ),
+                          pw.Text(
+                            'Profit / Loss: Rs ${_fmtMoney(report.profitOrLoss)}',
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                );
+
+                await Printing.layoutPdf(
+                  onLayout: (format) async => pdf.save(),
+                );
+              },
+              icon: const Icon(Icons.picture_as_pdf),
+              label: const Text('Download PDF'),
+            ),
+          ],
+        );
+      },
     );
   }
 

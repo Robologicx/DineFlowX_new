@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
 import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
+import 'package:hotel_management_system/data/models/close_day_report.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
+import 'package:hotel_management_system/data/repositories/expense_repository.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
 import 'package:hotel_management_system/state_management/table_state_and_notifier.dart';
 
@@ -23,10 +25,225 @@ class OrderRepository {
       .doc(_branchId)
       .collection('orders');
 
+  DocumentReference<Map<String, dynamic>> get _operationsSettingsRef =>
+      FirebaseFirestore.instance
+          .collection('businesses')
+          .doc(_businessId)
+          .collection('branches')
+          .doc(_branchId)
+          .collection('settings')
+          .doc('operations');
+
   final String _businessId;
   final String _branchId;
   final TableNotifier? _tableNotifier;
   static const Duration _statusUpdateWait = Duration(milliseconds: 1200);
+
+  DateTime? _toDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is String) {
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) return parsed;
+      final ms = int.tryParse(value);
+      if (ms != null) return DateTime.fromMillisecondsSinceEpoch(ms);
+    }
+    return null;
+  }
+
+  String _businessDayIdFromStart(DateTime startAt) {
+    final y = startAt.year.toString().padLeft(4, '0');
+    final m = startAt.month.toString().padLeft(2, '0');
+    final d = startAt.day.toString().padLeft(2, '0');
+    final h = startAt.hour.toString().padLeft(2, '0');
+    final min = startAt.minute.toString().padLeft(2, '0');
+    return '$y-$m-$d-$h$min';
+  }
+
+  Future<DateTime?> _getCurrentDayStartAtFromStore() async {
+    final localDoc = await OfflineLocalReadService.instance.getBranchDocument(
+      businessId: _businessId,
+      branchId: _branchId,
+      collectionName: 'settings',
+      documentId: 'operations',
+    );
+
+    final localStart = _toDateTime(localDoc?['currentDayStartAt']);
+    if (localStart != null) {
+      return localStart;
+    }
+
+    final remoteDoc = await _operationsSettingsRef.get();
+    if (!remoteDoc.exists) return null;
+    return _toDateTime(remoteDoc.data()?['currentDayStartAt']);
+  }
+
+  Future<DateTime> ensureCurrentDayStartAt() async {
+    final existing = await _getCurrentDayStartAtFromStore();
+    if (existing != null) {
+      return existing;
+    }
+
+    final now = DateTime.now();
+    final nowUtc = now.toUtc();
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/settings/operations',
+      data: {
+        'currentDayStartAt': nowUtc,
+        'currentBusinessDayId': _businessDayIdFromStart(nowUtc),
+        'updatedAt': nowUtc,
+      },
+      merge: true,
+    );
+    return nowUtc;
+  }
+
+  Future<List<OrderModel>> _getOrdersInRange({
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final localOrders = await _getLocalOrders();
+    if (localOrders.isNotEmpty) {
+      final filtered = localOrders.where((order) {
+        return !order.createdAt.isBefore(start) &&
+            !order.createdAt.isAfter(end);
+      }).toList();
+      filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return filtered;
+    }
+
+    final snapshot = await _ordersRef
+        .where('createdAt', isGreaterThanOrEqualTo: start)
+        .where('createdAt', isLessThanOrEqualTo: end)
+        .get();
+
+    return snapshot.docs
+        .map(_safeOrderFromDoc)
+        .whereType<OrderModel>()
+        .toList();
+  }
+
+  Future<CloseDayReport> _buildCloseDayReport({
+    required DateTime dayStartAt,
+    required DateTime dayClosedAt,
+  }) async {
+    final orders = await _getOrdersInRange(start: dayStartAt, end: dayClosedAt);
+    final expenses = await ExpenseRepository(
+      businessId: _businessId,
+      branchId: _branchId,
+    ).getExpensesByDateRange(startDate: dayStartAt, endDate: dayClosedAt);
+
+    final completedOrders = orders
+        .where((o) => o.orderStatus == OrderStatus.completed)
+        .length;
+    final pendingOrders = orders
+        .where((o) => o.orderStatus == OrderStatus.pending)
+        .length;
+    final inProgressOrders = orders
+        .where((o) => o.orderStatus == OrderStatus.inProgress)
+        .length;
+    final cancelledOrders = orders
+        .where((o) => o.orderStatus == OrderStatus.cancelled)
+        .length;
+    final refundedOrders = orders
+        .where((o) => o.orderStatus == OrderStatus.refunded)
+        .length;
+
+    final revenueOrders = orders.where((o) {
+      return o.orderStatus == OrderStatus.completed ||
+          o.orderStatus == OrderStatus.pending ||
+          o.orderStatus == OrderStatus.inProgress;
+    });
+
+    final totalAmount = revenueOrders.fold<double>(
+      0.0,
+      (runningTotal, order) => runningTotal + order.totalAmount,
+    );
+    final totalExpenses = expenses.fold<double>(
+      0.0,
+      (runningTotal, expense) => runningTotal + expense.amount,
+    );
+    final cashInHandAfterExpenses = totalAmount - totalExpenses;
+
+    return CloseDayReport(
+      dayStartAt: dayStartAt,
+      dayClosedAt: dayClosedAt,
+      totalOrders: orders.length,
+      completedOrders: completedOrders,
+      pendingOrders: pendingOrders,
+      inProgressOrders: inProgressOrders,
+      cancelledOrders: cancelledOrders,
+      refundedOrders: refundedOrders,
+      totalAmount: totalAmount,
+      totalExpenses: totalExpenses,
+      cashInHandAfterExpenses: cashInHandAfterExpenses,
+      profitOrLoss: cashInHandAfterExpenses,
+    );
+  }
+
+  Future<CloseDayReport> closeCurrentDay({String? closedBy}) async {
+    final currentDayStartAt = await _getCurrentDayStartAtFromStore();
+    final nowUtc = DateTime.now().toUtc();
+
+    final dayStartAt = currentDayStartAt ?? nowUtc;
+    final report = await _buildCloseDayReport(
+      dayStartAt: dayStartAt,
+      dayClosedAt: nowUtc,
+    );
+
+    await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+      documentPath:
+          'businesses/$_businessId/branches/$_branchId/settings/operations',
+      data: {
+        'lastDayClosedAt': nowUtc,
+        'lastDayClosedBy': closedBy,
+        'currentDayStartAt': nowUtc,
+        'currentBusinessDayId': _businessDayIdFromStart(nowUtc),
+        'updatedAt': nowUtc,
+      },
+      merge: true,
+    );
+
+    return report;
+  }
+
+  Stream<DateTime> currentDayStartAtStream() {
+    return Stream<DateTime>.multi((controller) {
+      StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? sub;
+      bool isCancelled = false;
+
+      Future<void> emitFallback() async {
+        if (isCancelled) return;
+        final value = await ensureCurrentDayStartAt();
+        if (isCancelled) return;
+        controller.add(value);
+      }
+
+      sub = _operationsSettingsRef.snapshots().listen(
+        (snapshot) async {
+          final startAt = _toDateTime(snapshot.data()?['currentDayStartAt']);
+          if (startAt != null) {
+            controller.add(startAt);
+            return;
+          }
+          await emitFallback();
+        },
+        onError: (_) async {
+          await emitFallback();
+        },
+      );
+
+      unawaited(emitFallback());
+
+      controller.onCancel = () {
+        isCancelled = true;
+        sub?.cancel();
+      };
+    }).distinct((a, b) => a.millisecondsSinceEpoch == b.millisecondsSinceEpoch);
+  }
 
   Future<List<OrderModel>> _getLocalOrders() async {
     final rows = await OfflineLocalReadService.instance.getBranchCollection(
@@ -178,6 +395,9 @@ class OrderRepository {
   Future<void> createOrder(OrderModel order) async {
     await _assertBusinessEnabled();
 
+    final currentDayStartAt = await ensureCurrentDayStartAt();
+    final businessDayId = _businessDayIdFromStart(currentDayStartAt);
+
     final Map<String, dynamic> orderMap = order.toMap();
 
     List<Map<String, dynamic>> mapOfOrderItems;
@@ -204,6 +424,8 @@ class OrderRepository {
     // timestamps
     orderMap['createdAt'] = orderMap['createdAt'] ?? DateTime.now();
     orderMap['updatedAt'] = DateTime.now();
+    orderMap['businessDayId'] = businessDayId;
+    orderMap['businessDayStartAt'] = currentDayStartAt;
 
     // write the modified map (was using order.toMap() before)
     final orderDocRef = _ordersRef.doc();
@@ -301,22 +523,51 @@ class OrderRepository {
 
   /// Get today's orders as a real-time stream for better performance.
   Stream<List<OrderModel>> getTodayOrdersStream() {
-    final now = DateTime.now();
-    final startOfDay = DateTime(now.year, now.month, now.day);
-    final startOfNextDay = startOfDay.add(const Duration(days: 1));
+    return getCurrentBusinessDayOrdersStream();
+  }
 
-    return _hybridOrdersStream(
-      remoteQuery: _ordersRef
-          .where('createdAt', isGreaterThanOrEqualTo: startOfDay)
-          .where('createdAt', isLessThan: startOfNextDay)
-          .orderBy('createdAt', descending: true),
-      localSelector: (local) => local.where((order) {
-        return order.createdAt.isAfter(
-              startOfDay.subtract(const Duration(milliseconds: 1)),
-            ) &&
-            order.createdAt.isBefore(startOfNextDay);
-      }).toList(),
-    );
+  Stream<List<OrderModel>> getCurrentBusinessDayOrdersStream() {
+    return Stream.multi((controller) {
+      StreamSubscription<DateTime>? dayStartSub;
+      StreamSubscription<List<OrderModel>>? ordersSub;
+      bool isCancelled = false;
+      DateTime? activeStart;
+
+      void resubscribeOrders(DateTime dayStartAt) {
+        if (isCancelled) return;
+
+        if (activeStart != null &&
+            activeStart!.millisecondsSinceEpoch ==
+                dayStartAt.millisecondsSinceEpoch) {
+          return;
+        }
+
+        activeStart = dayStartAt;
+        ordersSub?.cancel();
+        ordersSub = _hybridOrdersStream(
+          remoteQuery: _ordersRef
+              .where('createdAt', isGreaterThanOrEqualTo: dayStartAt)
+              .orderBy('createdAt', descending: true),
+          localSelector: (local) => local
+              .where(
+                (order) =>
+                    !order.createdAt.toUtc().isBefore(dayStartAt.toUtc()),
+              )
+              .toList(),
+        ).listen(controller.add, onError: controller.addError);
+      }
+
+      dayStartSub = currentDayStartAtStream().listen(
+        resubscribeOrders,
+        onError: controller.addError,
+      );
+
+      controller.onCancel = () {
+        isCancelled = true;
+        ordersSub?.cancel();
+        dayStartSub?.cancel();
+      };
+    });
   }
 
   /// Get order by Statuses

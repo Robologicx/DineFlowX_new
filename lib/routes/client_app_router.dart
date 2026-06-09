@@ -1,5 +1,8 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
@@ -31,7 +34,27 @@ class ClientAppRouter {
   }
 
   static final GoRouter router = GoRouter(
-    initialLocation: '/${ClientAppRoutes.onBoarding}',
+    initialLocation: FirebaseAuth.instance.currentUser == null
+        ? '/${ClientAppRoutes.onBoarding}'
+        : '/${ClientAppRoutes.shell}',
+    refreshListenable: GoRouterRefreshStream(
+      FirebaseAuth.instance.authStateChanges(),
+    ),
+    redirect: (context, state) {
+      final isLoggedIn = FirebaseAuth.instance.currentUser != null;
+      final onboardingPath = '/${ClientAppRoutes.onBoarding}';
+      final loginPath = '/${ClientAppRoutes.login}';
+      final shellPath = '/${ClientAppRoutes.shell}';
+
+      final atOnboarding = state.matchedLocation == onboardingPath;
+      final atLogin = state.matchedLocation == loginPath;
+
+      if (isLoggedIn && (atOnboarding || atLogin)) {
+        return shellPath;
+      }
+
+      return null;
+    },
     routes: [
       // Root: if opened from businessname-client.dineflowx.com, resolve tenant.
       GoRoute(
@@ -48,42 +71,6 @@ class ClientAppRouter {
 
           // Fallback for direct root opens without business-specific host.
           return OnBoardingScreen();
-        },
-      ),
-
-      // Public per-business client paths
-      GoRoute(
-        path: '/:businessKey',
-        builder: (context, state) {
-          return _BusinessPathClientEntry(
-            businessKey: state.pathParameters['businessKey'] ?? '',
-            businessIdHint: state.uri.queryParameters['businessId'],
-            branchId: state.uri.queryParameters['branchId'],
-            tableId: state.uri.queryParameters['tableId'],
-          );
-        },
-      ),
-      GoRoute(
-        path: '/:businessKey/clientapp',
-        builder: (context, state) {
-          return _BusinessPathClientEntry(
-            businessKey: state.pathParameters['businessKey'] ?? '',
-            businessIdHint: state.uri.queryParameters['businessId'],
-            branchId: state.uri.queryParameters['branchId'],
-            tableId: state.uri.queryParameters['tableId'],
-          );
-        },
-      ),
-      // Backward-compatible typo path
-      GoRoute(
-        path: '/:businessKey/cleintapp',
-        builder: (context, state) {
-          return _BusinessPathClientEntry(
-            businessKey: state.pathParameters['businessKey'] ?? '',
-            businessIdHint: state.uri.queryParameters['businessId'],
-            branchId: state.uri.queryParameters['branchId'],
-            tableId: state.uri.queryParameters['tableId'],
-          );
         },
       ),
 
@@ -162,10 +149,63 @@ class ClientAppRouter {
         name: ClientAppRoutes.myProfile,
         builder: (context, state) => MyProfileScreen(),
       ),
+
+      // Public per-business client paths.
+      // Keep these after static paths so routes like /addToCartScreen
+      // are not accidentally captured as a business key.
+      GoRoute(
+        path: '/:businessKey',
+        builder: (context, state) {
+          return _BusinessPathClientEntry(
+            businessKey: state.pathParameters['businessKey'] ?? '',
+            businessIdHint: state.uri.queryParameters['businessId'],
+            branchId: state.uri.queryParameters['branchId'],
+            tableId: state.uri.queryParameters['tableId'],
+          );
+        },
+      ),
+      GoRoute(
+        path: '/:businessKey/clientapp',
+        builder: (context, state) {
+          return _BusinessPathClientEntry(
+            businessKey: state.pathParameters['businessKey'] ?? '',
+            businessIdHint: state.uri.queryParameters['businessId'],
+            branchId: state.uri.queryParameters['branchId'],
+            tableId: state.uri.queryParameters['tableId'],
+          );
+        },
+      ),
+      // Backward-compatible typo path
+      GoRoute(
+        path: '/:businessKey/cleintapp',
+        builder: (context, state) {
+          return _BusinessPathClientEntry(
+            businessKey: state.pathParameters['businessKey'] ?? '',
+            businessIdHint: state.uri.queryParameters['businessId'],
+            branchId: state.uri.queryParameters['branchId'],
+            tableId: state.uri.queryParameters['tableId'],
+          );
+        },
+      ),
     ],
     errorBuilder: (context, state) =>
         const Scaffold(body: Center(child: Text('404 - Page not found'))),
   );
+}
+
+class GoRouterRefreshStream extends ChangeNotifier {
+  GoRouterRefreshStream(Stream<dynamic> stream) {
+    notifyListeners();
+    _subscription = stream.asBroadcastStream().listen((_) => notifyListeners());
+  }
+
+  late final StreamSubscription<dynamic> _subscription;
+
+  @override
+  void dispose() {
+    _subscription.cancel();
+    super.dispose();
+  }
 }
 
 class _BusinessPathClientEntry extends StatelessWidget {

@@ -64,7 +64,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '880800764076',
     projectId: 'dineflowx',
     storageBucket: 'dineflowx.firebasestorage.app',
-    iosBundleId: 'com.example.hotelManagementSystem',
+    iosBundleId: 'com.dineflowx.app',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -73,7 +73,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '880800764076',
     projectId: 'dineflowx',
     storageBucket: 'dineflowx.firebasestorage.app',
-    iosBundleId: 'com.example.hotelManagementSystem',
+    iosBundleId: 'com.dineflowx.app',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(

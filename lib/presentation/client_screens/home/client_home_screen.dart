@@ -364,6 +364,9 @@ class _ClientHomeScreenState extends ConsumerState<ClientHomeScreen>
                                 return CategoryProducts(
                                   productModel: allProducts,
                                   categoryName: 'All Items',
+                                  tableID: tableLabel.isEmpty
+                                      ? null
+                                      : tableLabel,
                                 );
                               },
                             ),
@@ -398,6 +401,9 @@ class _ClientHomeScreenState extends ConsumerState<ClientHomeScreen>
                                   productModel: snapshot.data!,
                                   categoryName: category
                                       .name, // Pass actual category name
+                                  tableID: tableLabel.isEmpty
+                                      ? null
+                                      : tableLabel,
                                 );
                               },
                             );

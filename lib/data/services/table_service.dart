@@ -1,6 +1,5 @@
 import 'package:hotel_management_system/data/models/table_model.dart';
 import 'package:hotel_management_system/data/repositories/table_repository.dart';
-import 'package:hotel_management_system/routes/client_app_routes.dart';
 
 // What this file contains
 // ✅ Complete CRUD operations for tables

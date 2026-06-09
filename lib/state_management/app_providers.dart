@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
+import 'package:hotel_management_system/data/models/close_day_report.dart';
 import 'package:hotel_management_system/data/models/room_model.dart';
 import 'package:hotel_management_system/data/models/sales_model_and_management.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
@@ -678,5 +679,73 @@ final todayOrdersStreamProvider =
       ({String businessId, String branchId, TableNotifier tableNotifier})
     >((ref, params) {
       final service = ref.read(_orderServiceProvider(params));
-      return service.getTodayOrdersStream();
+      return service.getCurrentBusinessDayOrdersStream();
+    });
+
+final currentDayStartAtProvider =
+    StreamProvider.family<
+      DateTime,
+      ({String businessId, String branchId, TableNotifier tableNotifier})
+    >((ref, params) {
+      final service = ref.read(_orderServiceProvider(params));
+      return service.currentDayStartAtStream();
+    });
+
+final closeCurrentDayProvider =
+    FutureProvider.family<
+      void,
+      ({
+        String businessId,
+        String branchId,
+        TableNotifier tableNotifier,
+        String? closedBy,
+      })
+    >((ref, params) async {
+      final service = ref.read(
+        _orderServiceProvider((
+          businessId: params.businessId,
+          branchId: params.branchId,
+          tableNotifier: params.tableNotifier,
+        )),
+      );
+
+      await service.closeCurrentDay(closedBy: params.closedBy);
+      ref.invalidate(todayOrdersStreamProvider);
+      ref.invalidate(
+        currentDayStartAtProvider((
+          businessId: params.businessId,
+          branchId: params.branchId,
+          tableNotifier: params.tableNotifier,
+        )),
+      );
+    });
+
+final closeCurrentDayReportProvider =
+    FutureProvider.family<
+      CloseDayReport,
+      ({
+        String businessId,
+        String branchId,
+        TableNotifier tableNotifier,
+        String? closedBy,
+      })
+    >((ref, params) async {
+      final service = ref.read(
+        _orderServiceProvider((
+          businessId: params.businessId,
+          branchId: params.branchId,
+          tableNotifier: params.tableNotifier,
+        )),
+      );
+
+      final report = await service.closeCurrentDay(closedBy: params.closedBy);
+      ref.invalidate(todayOrdersStreamProvider);
+      ref.invalidate(
+        currentDayStartAtProvider((
+          businessId: params.businessId,
+          branchId: params.branchId,
+          tableNotifier: params.tableNotifier,
+        )),
+      );
+      return report;
     });

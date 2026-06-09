@@ -5,6 +5,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
+import 'package:hotel_management_system/data/services/auth_service.dart';
 import 'package:hotel_management_system/presentation/client_screens/cart/add_to_cart.dart';
 import 'package:hotel_management_system/presentation/client_screens/home/client_shell.dart';
 import 'package:hotel_management_system/state_management/theme_provider.dart';
@@ -19,6 +20,7 @@ import 'firebase_options.dart'; // Import the generated Firebase options
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized(); // Ensure bindings are initialized
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await AuthService().initializeSession();
   await configureFirestoreOfflineSupport();
   await OfflineFirestoreWriteQueueService.instance.start();
   await OfflineMediaUploadQueueService.instance.start();
@@ -197,7 +199,7 @@ class AdminApp extends ConsumerWidget {
       },
       routes: AdminAppRoutes.routes,
       home: deepLinkHome,
-      initialRoute: deepLinkHome == null ? AdminAppRoutes.portalSelector : null,
+      initialRoute: deepLinkHome == null ? AdminAppRoutes.splash : null,
       // home: SplashScreen(),
     );
   }

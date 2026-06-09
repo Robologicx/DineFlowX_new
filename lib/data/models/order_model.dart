@@ -35,6 +35,8 @@ class OrderModel {
   final String? waiterId; // Assigned waiter (only for dining orders)
   final String? waiterName; // Assigned waiter (only for dining orders)
   final String? additionalNotes;
+  final String? businessDayId;
+  final DateTime? businessDayStartAt;
 
   OrderModel({
     required this.orderId,
@@ -55,6 +57,8 @@ class OrderModel {
     this.waiterId,
     this.waiterName,
     this.additionalNotes,
+    this.businessDayId,
+    this.businessDayStartAt,
   }) {
     // Validation rules
     if (orderType == OrderType.delivery &&
@@ -201,6 +205,10 @@ class OrderModel {
       waiterId: waiterId,
       waiterName: waiterName,
       additionalNotes: additionalNotes,
+      businessDayId: data['businessDayId'] as String?,
+      businessDayStartAt: data['businessDayStartAt'] != null
+          ? parseDateTime(data['businessDayStartAt'])
+          : null,
     );
   }
 
@@ -252,6 +260,10 @@ class OrderModel {
       'waiterId': waiterId,
       'waiterName': waiterName,
       'additionalNotes': additionalNotes,
+      'businessDayId': businessDayId,
+      'businessDayStartAt': businessDayStartAt != null
+          ? Timestamp.fromDate(businessDayStartAt!)
+          : null,
     };
   }
 }

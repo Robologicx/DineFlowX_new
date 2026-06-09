@@ -4,7 +4,6 @@ import 'package:hotel_management_system/presentation/admin_screens/Table_managem
 import 'package:hotel_management_system/presentation/admin_screens/admin_shell_wrapper.dart';
 import 'package:hotel_management_system/presentation/admin_screens/auth/admin_login_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/buisness_management_screen/business_management_screen_claude.dart';
-import 'package:hotel_management_system/presentation/admin_screens/dashboard_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/expense_management_screen/expense_management_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/home/widgets/user_profile_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/menu_management_screen/category_management_screen.dart';
@@ -66,7 +65,8 @@ class AdminAppRoutes {
     home: (context) => AdminShellWrapper(),
     login: (context) => const AdminLoginScreen(),
     userProfile: (context) => const UserProfileScreen(),
-    dashboard: (context) => const DashboardScreen(),
+    // Keep /dashboard as alias of /home so there is only one dashboard shell.
+    dashboard: (context) => AdminShellWrapper(),
     staffManagement: (context) => const StaffManagementScreen(),
     businessManagement: (context) => const BusinessManagementScreen(),
     reportsManagement: (context) => const SalesDashboardScreen(),

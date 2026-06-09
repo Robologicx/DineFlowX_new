@@ -119,16 +119,29 @@ class _ExpenseManagementScreenState
                   '${expense.category} • ${expense.expenseDate.toString().substring(0, 10)}\n${expense.note ?? ''}',
                 ),
                 isThreeLine: true,
-                trailing: Text(
-                  'Rs ${expense.amount.toStringAsFixed(2)}',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Rs ${expense.amount.toStringAsFixed(2)}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    IconButton(
+                      tooltip: 'Delete expense',
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      onPressed: () async {
+                        await _confirmDeleteExpense(context, params, expense);
+                      },
+                    ),
+                  ],
                 ),
                 onTap: () =>
                     _openExpenseDialog(context, params, existing: expense),
                 onLongPress: () async {
-                  await ref
-                      .read(expenseProvider(params).notifier)
-                      .deleteExpense(expense.id);
+                  await _confirmDeleteExpense(context, params, expense);
                 },
               );
             },
@@ -136,6 +149,38 @@ class _ExpenseManagementScreenState
         ),
       ],
     );
+  }
+
+  Future<void> _confirmDeleteExpense(
+    BuildContext context,
+    ({String businessId, String branchId}) params,
+    ExpenseModel expense,
+  ) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete Expense'),
+          content: Text('Are you sure you want to delete "${expense.title}"?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldDelete != true) {
+      return;
+    }
+
+    await ref.read(expenseProvider(params).notifier).deleteExpense(expense.id);
   }
 
   Future<void> _openExpenseDialog(
@@ -156,6 +201,7 @@ class _ExpenseManagementScreenState
     await showDialog<void>(
       context: context,
       builder: (context) {
+        bool isSaving = false;
         return StatefulBuilder(
           builder: (context, setStateDialog) => AlertDialog(
             title: Text(existing == null ? 'Add Expense' : 'Edit Expense'),
@@ -215,49 +261,64 @@ class _ExpenseManagementScreenState
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: isSaving ? null : () => Navigator.pop(context),
                 child: const Text('Cancel'),
               ),
               FilledButton(
-                onPressed: () async {
-                  final amount = double.tryParse(amountCtrl.text.trim());
-                  if (titleCtrl.text.trim().isEmpty ||
-                      amount == null ||
-                      amount <= 0) {
-                    return;
-                  }
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        final amount = double.tryParse(amountCtrl.text.trim());
+                        if (titleCtrl.text.trim().isEmpty ||
+                            amount == null ||
+                            amount <= 0) {
+                          return;
+                        }
 
-                  final now = DateTime.now();
-                  final payload = ExpenseModel(
-                    id: existing?.id ?? '',
-                    title: titleCtrl.text.trim(),
-                    category: categoryCtrl.text.trim().isEmpty
-                        ? 'General'
-                        : categoryCtrl.text.trim(),
-                    amount: amount,
-                    note: noteCtrl.text.trim().isEmpty
-                        ? null
-                        : noteCtrl.text.trim(),
-                    expenseDate: selectedDate,
-                    createdAt: existing?.createdAt ?? now,
-                    updatedAt: now,
-                  );
+                        setStateDialog(() => isSaving = true);
+                        try {
+                          final now = DateTime.now();
+                          final payload = ExpenseModel(
+                            id: existing?.id ?? '',
+                            title: titleCtrl.text.trim(),
+                            category: categoryCtrl.text.trim().isEmpty
+                                ? 'General'
+                                : categoryCtrl.text.trim(),
+                            amount: amount,
+                            note: noteCtrl.text.trim().isEmpty
+                                ? null
+                                : noteCtrl.text.trim(),
+                            expenseDate: selectedDate,
+                            createdAt: existing?.createdAt ?? now,
+                            updatedAt: now,
+                          );
 
-                  if (existing == null) {
-                    await ref
-                        .read(expenseProvider(params).notifier)
-                        .addExpense(payload);
-                  } else {
-                    await ref
-                        .read(expenseProvider(params).notifier)
-                        .updateExpense(payload);
-                  }
+                          if (existing == null) {
+                            await ref
+                                .read(expenseProvider(params).notifier)
+                                .addExpense(payload);
+                          } else {
+                            await ref
+                                .read(expenseProvider(params).notifier)
+                                .updateExpense(payload);
+                          }
 
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                  }
-                },
-                child: const Text('Save'),
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                          }
+                        } finally {
+                          if (context.mounted) {
+                            setStateDialog(() => isSaving = false);
+                          }
+                        }
+                      },
+                child: isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Save'),
               ),
             ],
           ),

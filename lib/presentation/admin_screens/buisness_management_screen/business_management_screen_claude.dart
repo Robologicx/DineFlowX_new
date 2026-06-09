@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/models/buisness_model.dart';
+import 'package:hotel_management_system/data/models/close_day_report.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
 import 'package:hotel_management_system/state_management/buisness_state_and_notifier.dart';
 
@@ -59,6 +64,7 @@ class _BusinessManagementScreenState
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   bool _showActiveOnly = true;
+  bool _isClosingDay = false;
 
   @override
   void initState() {
@@ -116,6 +122,12 @@ class _BusinessManagementScreenState
     final businessState = ref.watch(businessProvider);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final selectedUser = ref.watch(userProvider).selectedUser;
+    final activeBusinessId =
+        selectedUser?.primarybusinessId ??
+        BusinessRepository.temporaryBusinesshId;
+    final activeBranchId =
+        selectedUser?.primaryBranchId ?? BusinessRepository.temporaryBranchId;
 
     return Scaffold(
       appBar: AppBar(
@@ -123,6 +135,17 @@ class _BusinessManagementScreenState
         centerTitle: true,
         elevation: 0,
         actions: [
+          IconButton(
+            onPressed: _isClosingDay
+                ? null
+                : () => _handleCloseDay(
+                    businessId: activeBusinessId,
+                    branchId: activeBranchId,
+                    closedBy: selectedUser?.uid,
+                  ),
+            icon: const Icon(Icons.event_busy),
+            tooltip: 'Close Day',
+          ),
           IconButton(
             onPressed: () => _showCreateBusinessDialog(context),
             icon: const Icon(Icons.add_business),
@@ -200,6 +223,192 @@ class _BusinessManagementScreenState
         icon: const Icon(Icons.add_business),
         label: const Text('Add Business'),
       ),
+    );
+  }
+
+  Future<void> _handleCloseDay({
+    required String businessId,
+    required String branchId,
+    required String? closedBy,
+  }) async {
+    if (businessId.isEmpty || branchId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Select an active business and branch to close day.'),
+        ),
+      );
+      return;
+    }
+
+    final shouldClose =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Close Day'),
+            content: const Text(
+              'This will close the current business day and start a new one. Continue?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Close Day'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!shouldClose || !mounted) return;
+
+    setState(() => _isClosingDay = true);
+    try {
+      final tableNotifier = ref.read(
+        tableProvider((businessId: businessId, branchId: branchId)).notifier,
+      );
+
+      final closeDayRequest = (
+        businessId: businessId,
+        branchId: branchId,
+        tableNotifier: tableNotifier,
+        closedBy: closedBy,
+      );
+      ref.invalidate(closeCurrentDayReportProvider(closeDayRequest));
+      final report = await ref.read(
+        closeCurrentDayReportProvider(closeDayRequest).future,
+      );
+
+      if (!mounted) return;
+      await _showCloseDayReportDialog(report);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to close day: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _isClosingDay = false);
+      }
+    }
+  }
+
+  String _formatReportDateTime(DateTime value) {
+    final year = value.year.toString().padLeft(4, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    final hour = value.hour.toString().padLeft(2, '0');
+    final minute = value.minute.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute';
+  }
+
+  String _fmtMoney(double value) => value.toStringAsFixed(2);
+
+  Future<void> _showCloseDayReportDialog(CloseDayReport report) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Day Closed Report'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Start: ${_formatReportDateTime(report.dayStartAt.toLocal())}',
+                  ),
+                  Text(
+                    'Closed: ${_formatReportDateTime(report.dayClosedAt.toLocal())}',
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Total Orders: ${report.totalOrders}'),
+                  Text('Completed: ${report.completedOrders}'),
+                  Text('Pending: ${report.pendingOrders}'),
+                  Text('In Progress: ${report.inProgressOrders}'),
+                  Text('Cancelled: ${report.cancelledOrders}'),
+                  Text('Refunded: ${report.refundedOrders}'),
+                  const Divider(height: 24),
+                  Text('Total Amount: Rs ${_fmtMoney(report.totalAmount)}'),
+                  Text('Total Expenses: Rs ${_fmtMoney(report.totalExpenses)}'),
+                  Text(
+                    'Cash In Hand After Expense: Rs ${_fmtMoney(report.cashInHandAfterExpenses)}',
+                  ),
+                  Text('Profit / Loss: Rs ${_fmtMoney(report.profitOrLoss)}'),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                final pdf = pw.Document();
+                pdf.addPage(
+                  pw.Page(
+                    pageFormat: PdfPageFormat.a4,
+                    build: (context) {
+                      return pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text(
+                            'Close Day Report',
+                            style: pw.TextStyle(
+                              fontSize: 20,
+                              fontWeight: pw.FontWeight.bold,
+                            ),
+                          ),
+                          pw.SizedBox(height: 12),
+                          pw.Text(
+                            'Start: ${_formatReportDateTime(report.dayStartAt.toLocal())}',
+                          ),
+                          pw.Text(
+                            'Closed: ${_formatReportDateTime(report.dayClosedAt.toLocal())}',
+                          ),
+                          pw.SizedBox(height: 12),
+                          pw.Text('Total Orders: ${report.totalOrders}'),
+                          pw.Text('Completed: ${report.completedOrders}'),
+                          pw.Text('Pending: ${report.pendingOrders}'),
+                          pw.Text('In Progress: ${report.inProgressOrders}'),
+                          pw.Text('Cancelled: ${report.cancelledOrders}'),
+                          pw.Text('Refunded: ${report.refundedOrders}'),
+                          pw.SizedBox(height: 12),
+                          pw.Text(
+                            'Total Amount: Rs ${_fmtMoney(report.totalAmount)}',
+                          ),
+                          pw.Text(
+                            'Total Expenses: Rs ${_fmtMoney(report.totalExpenses)}',
+                          ),
+                          pw.Text(
+                            'Cash In Hand After Expense: Rs ${_fmtMoney(report.cashInHandAfterExpenses)}',
+                          ),
+                          pw.Text(
+                            'Profit / Loss: Rs ${_fmtMoney(report.profitOrLoss)}',
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                );
+
+                await Printing.layoutPdf(
+                  onLayout: (format) async => pdf.save(),
+                );
+              },
+              icon: const Icon(Icons.picture_as_pdf),
+              label: const Text('Download PDF'),
+            ),
+          ],
+        );
+      },
     );
   }
 

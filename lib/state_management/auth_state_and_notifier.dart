@@ -81,7 +81,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<void> signOut() async {
     state = state.copyWith(isLoading: true);
     try {
-      await AuthService().signOut();
+      await _service.signOut();
       state = const AuthState(); // clear state completely
     } catch (e) {
       state = state.copyWith(error: e.toString(), isLoading: false);
@@ -93,7 +93,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<void> deleteAccount() async {
     state = state.copyWith(isLoading: true);
     try {
-      await AuthService().deleteAccount();
+      await _service.deleteAccount();
       state = const AuthState();
     } catch (e) {
       state = state.copyWith(error: e.toString(), isLoading: false);

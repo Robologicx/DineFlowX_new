@@ -59,7 +59,7 @@ class ProductModel {
       productId: documentId,
       name: (data['name'] ?? '').toString(),
       description: (data['description'] ?? '').toString(),
-      imageUrl: data['imageUrl'] == null ? null : data['imageUrl'].toString(),
+      imageUrl: data['imageUrl']?.toString(),
       price: _parseDouble(data['price']),
       categoryId: (data['categoryId'] ?? '').toString(),
       isAvailable: data['isAvailable'] is bool

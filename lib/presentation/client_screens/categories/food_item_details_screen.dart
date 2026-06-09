@@ -7,8 +7,10 @@ import 'package:hotel_management_system/presentation/common_widgets/custom_butto
 import 'package:hotel_management_system/presentation/common_widgets/custom_text_field.dart';
 import 'package:hotel_management_system/routes/client_app_routes.dart';
 import 'package:hotel_management_system/state_management/client_cart_state_and_notifier.dart';
+import 'package:hotel_management_system/state_management/direct_dining_state.dart';
 import 'package:hotel_management_system/state_management/favourite_provider.dart';
 import 'package:hotel_management_system/state_management/order_state_and_notifier.dart';
+import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 
 class FoodItemDetailsScreen extends ConsumerStatefulWidget {
   final String? tableId;
@@ -38,6 +40,8 @@ class _FoodItemDetailsScreenState extends ConsumerState<FoodItemDetailsScreen> {
   Widget build(BuildContext context) {
     final favourite = ref.watch(favouriteProvider);
     final orderRef = ref.read(orderNotifierProvider);
+    final tenantContext = ref.watch(tenantContextProvider);
+    final directDining = ref.watch(directDiningProvider);
 
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
@@ -141,9 +145,25 @@ class _FoodItemDetailsScreenState extends ConsumerState<FoodItemDetailsScreen> {
                             price: widget.product.price,
                           ),
                         );
+                    final businessId =
+                        (directDining.businessId ?? '').trim().isNotEmpty
+                        ? directDining.businessId!.trim()
+                        : tenantContext.businessId.trim();
+                    final branchId =
+                        (directDining.branchId ?? '').trim().isNotEmpty
+                        ? directDining.branchId!.trim()
+                        : tenantContext.branchId.trim();
+                    final tableId = (widget.tableId ?? '').trim();
+                    final qp = <String, String>{
+                      'businessId': businessId,
+                      'branchId': branchId,
+                    };
+                    if (tableId.isNotEmpty) {
+                      qp['tableId'] = tableId;
+                    }
                     context.goNamed(
                       ClientAppRoutes.cartScreen,
-                      extra: {'tableId': widget.tableId},
+                      queryParameters: qp,
                     );
                   },
                 ),

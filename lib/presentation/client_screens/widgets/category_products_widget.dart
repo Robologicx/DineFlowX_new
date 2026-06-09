@@ -41,7 +41,10 @@ class CategoryProducts extends StatelessWidget {
                   itemBuilder: (context, index) {
                     return Padding(
                       padding: const EdgeInsets.all(8.0),
-                      child: FoodGrid(product: productModel[index]),
+                      child: FoodGrid(
+                        product: productModel[index],
+                        tableID: tableID,
+                      ),
                     );
                   },
                 ),
@@ -59,7 +62,10 @@ class CategoryProducts extends StatelessWidget {
                     childAspectRatio: 3.5, // card ratio stays consistent
                   ),
                   itemBuilder: (context, index) {
-                    return FoodGrid(product: productModel[index]);
+                    return FoodGrid(
+                      product: productModel[index],
+                      tableID: tableID,
+                    );
                   },
                 ),
               ),
@@ -76,7 +82,10 @@ class CategoryProducts extends StatelessWidget {
                     childAspectRatio: 3.5,
                   ),
                   itemBuilder: (context, index) {
-                    return FoodGrid(product: productModel[index]);
+                    return FoodGrid(
+                      product: productModel[index],
+                      tableID: tableID,
+                    );
                   },
                 ),
               ),

@@ -96,7 +96,10 @@ class _AdminDrawerMenuScreenState extends ConsumerState<AdminDrawerMenuScreen> {
                       title: "Dashboard",
                       icon: Icons.dashboard,
                       ontap: () {
-                        Navigator.pushNamed(context, AdminAppRoutes.dashboard);
+                        Navigator.pushReplacementNamed(
+                          context,
+                          AdminAppRoutes.home,
+                        );
                       },
                     ),
 

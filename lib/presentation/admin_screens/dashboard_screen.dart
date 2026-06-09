@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_zoom_drawer/flutter_zoom_drawer.dart';
 import 'package:hotel_management_system/core/utils/offline_media_upload_queue_service.dart';
 import 'package:hotel_management_system/data/models/user_model.dart';
 import 'package:hotel_management_system/data/models/sales_model_and_management.dart'
@@ -14,7 +15,9 @@ import 'package:hotel_management_system/state_management/current_tenant_business
 import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({super.key, this.showNavigationBar = true});
+
+  final bool showNavigationBar;
 
   @override
   ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
@@ -22,6 +25,30 @@ class DashboardScreen extends ConsumerStatefulWidget {
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   bool _reportRequested = false;
+
+  PreferredSizeWidget? _buildAppBar(BuildContext context) {
+    if (!widget.showNavigationBar) {
+      return null;
+    }
+
+    return AppBar(
+      title: const Text('Dashboard'),
+      leading: IconButton(
+        icon: const Icon(Icons.menu),
+        onPressed: () {
+          final drawer = ZoomDrawer.of(context);
+          if (drawer != null) {
+            drawer.toggle();
+            return;
+          }
+
+          if (Navigator.of(context).canPop()) {
+            Navigator.of(context).maybePop();
+          }
+        },
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,12 +68,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
     // Step 1: handle loading & error states
     if (userState.isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: _buildAppBar(context),
+        body: const Center(child: CircularProgressIndicator()),
+      );
     }
 
     if (userState.error != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text("Dashboard")),
+        appBar: _buildAppBar(context),
         body: Center(
           child: Text(
             'Failed to load user: ${userState.error}',
@@ -60,7 +90,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
     // If no user found
     if (user == null) {
-      return const Scaffold(
+      return Scaffold(
+        appBar: _buildAppBar(context),
         body: Center(child: Text('No user information found.')),
       );
     }
@@ -80,6 +111,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     }
 
     return Scaffold(
+      appBar: _buildAppBar(context),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(12),
         child: Column(

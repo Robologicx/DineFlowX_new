@@ -6,6 +6,7 @@ import 'package:hotel_management_system/core/utils/offline_firestore_write_queue
 import 'package:hotel_management_system/core/utils/firestore_offline_config.dart';
 import 'package:hotel_management_system/core/utils/offline_media_upload_queue_service.dart';
 import 'package:hotel_management_system/core/utils/offline_order_queue_service.dart';
+import 'package:hotel_management_system/data/services/auth_service.dart';
 import 'package:hotel_management_system/presentation/common_widgets/offline_sync_status_banner.dart';
 import 'package:hotel_management_system/routes/client_app_router.dart';
 import 'package:hotel_management_system/state_management/current_tenant_business_provider.dart';
@@ -17,6 +18,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Ensure bindings are initialized
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await AuthService().initializeSession();
   await configureFirestoreOfflineSupport();
   await OfflineFirestoreWriteQueueService.instance.start();
   await OfflineMediaUploadQueueService.instance.start();

@@ -159,13 +159,17 @@ class SalesNotifier extends StateNotifier<SalesState> {
     );
 
     try {
-      final dates = _getDateRangeForPeriod(period);
-
-      final report = await _service.generateSalesReport(
-        startDate: dates.$1,
-        endDate: dates.$2,
-        period: period,
-      );
+      SalesReport report;
+      if (period == ReportPeriod.today) {
+        report = await _service.generateCurrentBusinessDayReport();
+      } else {
+        final dates = _getDateRangeForPeriod(period);
+        report = await _service.generateSalesReport(
+          startDate: dates.$1,
+          endDate: dates.$2,
+          period: period,
+        );
+      }
 
       state = state.copyWith(currentReport: report, isLoading: false);
     } catch (e) {

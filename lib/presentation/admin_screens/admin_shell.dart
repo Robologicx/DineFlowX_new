@@ -60,10 +60,10 @@ class _AdminShellState extends ConsumerState<AdminShell> {
           if (access.isBlocked) {
             return _buildBusinessDisabledScreen(access.reason);
           }
-          return const DashboardScreen();
+          return const DashboardScreen(showNavigationBar: false);
         },
-        loading: () => const DashboardScreen(),
-        error: (_, __) => const DashboardScreen(),
+        loading: () => const DashboardScreen(showNavigationBar: false),
+        error: (_, __) => const DashboardScreen(showNavigationBar: false),
       ),
     );
   }

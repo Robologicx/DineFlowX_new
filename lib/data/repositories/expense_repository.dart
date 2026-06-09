@@ -22,6 +22,52 @@ class ExpenseRepository {
           .doc(branchId)
           .collection('expenses');
 
+  DateTime? _toDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is String) {
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) return parsed;
+      final ms = int.tryParse(value);
+      if (ms != null) return DateTime.fromMillisecondsSinceEpoch(ms);
+    }
+    return null;
+  }
+
+  String _businessDayIdFromStart(DateTime startAt) {
+    final y = startAt.year.toString().padLeft(4, '0');
+    final m = startAt.month.toString().padLeft(2, '0');
+    final d = startAt.day.toString().padLeft(2, '0');
+    final h = startAt.hour.toString().padLeft(2, '0');
+    final min = startAt.minute.toString().padLeft(2, '0');
+    return '$y-$m-$d-$h$min';
+  }
+
+  Future<DateTime?> _getCurrentBusinessDayStartAt() async {
+    final localDoc = await OfflineLocalReadService.instance.getBranchDocument(
+      businessId: businessId,
+      branchId: branchId,
+      collectionName: 'settings',
+      documentId: 'operations',
+    );
+
+    final localStart = _toDateTime(localDoc?['currentDayStartAt']);
+    if (localStart != null) return localStart;
+
+    final remoteDoc = await _firestore
+        .collection('businesses')
+        .doc(businessId)
+        .collection('branches')
+        .doc(branchId)
+        .collection('settings')
+        .doc('operations')
+        .get();
+    if (!remoteDoc.exists) return null;
+    return _toDateTime(remoteDoc.data()?['currentDayStartAt']);
+  }
+
   Future<List<ExpenseModel>> getExpensesByDateRange({
     required DateTime startDate,
     required DateTime endDate,
@@ -68,8 +114,12 @@ class ExpenseRepository {
     final docRef = _expensesCollection.doc(
       expense.id.isEmpty ? null : expense.id,
     );
+    final currentDayStartAt =
+        await _getCurrentBusinessDayStartAt() ?? DateTime.now().toUtc();
     final toSave = expense.copyWith(
       id: docRef.id,
+      businessDayStartAt: currentDayStartAt,
+      businessDayId: _businessDayIdFromStart(currentDayStartAt),
       createdAt: expense.createdAt,
       updatedAt: DateTime.now(),
     );
@@ -81,6 +131,55 @@ class ExpenseRepository {
       merge: false,
     );
     return toSave;
+  }
+
+  Future<List<ExpenseModel>> getCurrentBusinessDayExpenses(
+    DateTime businessDayStartAt,
+  ) async {
+    final localRows = await OfflineLocalReadService.instance
+        .getBranchCollection(
+          businessId: businessId,
+          branchId: branchId,
+          collectionName: 'expenses',
+        );
+    if (localRows.isNotEmpty) {
+      return localRows
+          .map(
+            (doc) => ExpenseModel.fromMap(
+              doc,
+              (doc['__documentId'] ?? '').toString(),
+            ),
+          )
+          .where((expense) {
+            final marker = expense.businessDayStartAt;
+            if (marker != null) {
+              return marker.millisecondsSinceEpoch ==
+                  businessDayStartAt.millisecondsSinceEpoch;
+            }
+            return !expense.expenseDate.isBefore(businessDayStartAt);
+          })
+          .toList();
+    }
+
+    final snapshot = await _expensesCollection
+        .where('businessDayStartAt', isEqualTo: businessDayStartAt)
+        .get();
+
+    if (snapshot.docs.isNotEmpty) {
+      final expenses = snapshot.docs
+          .map((doc) => ExpenseModel.fromMap(doc.data(), doc.id))
+          .toList();
+      expenses.sort((a, b) => b.expenseDate.compareTo(a.expenseDate));
+      return expenses;
+    }
+
+    final fallbackSnapshot = await _expensesCollection
+        .where('expenseDate', isGreaterThanOrEqualTo: businessDayStartAt)
+        .orderBy('expenseDate', descending: true)
+        .get();
+    return fallbackSnapshot.docs
+        .map((doc) => ExpenseModel.fromMap(doc.data(), doc.id))
+        .toList();
   }
 
   Future<void> updateExpense(ExpenseModel expense) async {

@@ -1,6 +1,5 @@
 // sales_repository.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 
 /// Repository handles ONLY Firestore data access
@@ -32,19 +31,32 @@ class SalesRepository {
     yield* Stream.periodic(interval).asyncMap((_) => loader());
   }
 
-  Future<List<OrderModel>> _getLocalOrders() async {
-    final rows = await OfflineLocalReadService.instance.getBranchCollection(
-      businessId: businessId,
-      branchId: branchId,
-      collectionName: 'orders',
-    );
+  DateTime? _toDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is String) {
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) return parsed;
+      final ms = int.tryParse(value);
+      if (ms != null) return DateTime.fromMillisecondsSinceEpoch(ms);
+    }
+    return null;
+  }
 
-    return rows
-        .map(
-          (row) =>
-              OrderModel.fromMap(row, (row['__documentId'] ?? '').toString()),
-        )
-        .toList();
+  Future<DateTime?> getCurrentBusinessDayStartAt() async {
+    final remoteDoc = await _firestore
+        .collection('businesses')
+        .doc(businessId)
+        .collection('branches')
+        .doc(branchId)
+        .collection('settings')
+        .doc('operations')
+        .get(const GetOptions(source: Source.server));
+
+    if (!remoteDoc.exists) return null;
+    return _toDateTime(remoteDoc.data()?['currentDayStartAt']);
   }
 
   /// Get orders by date range and status
@@ -54,44 +66,19 @@ class SalesRepository {
     List<OrderStatus>? statuses,
   }) async {
     try {
-      final localOrders = await _getLocalOrders();
-      if (localOrders.isNotEmpty) {
-        final filtered = localOrders.where((order) {
-          final inRange =
-              order.createdAt.isAfter(
-                startDate.subtract(const Duration(milliseconds: 1)),
-              ) &&
-              order.createdAt.isBefore(
-                endDate.add(const Duration(milliseconds: 1)),
-              );
-
-          if (!inRange) return false;
-          if (statuses == null || statuses.isEmpty) return true;
-          return statuses.contains(order.orderStatus);
-        }).toList();
-
-        return filtered;
-      }
-
-      // 1. Fetch ALL orders in the date range.
       Query query = _ordersCollection
           .where('createdAt', isGreaterThanOrEqualTo: startDate)
           .where('createdAt', isLessThanOrEqualTo: endDate);
 
-      final snapshot = await query.get();
+      final snapshot = await query.get(const GetOptions(source: Source.server));
 
-      // 2. Map documents to models - FIX APPLIED HERE:
       final allOrdersInRange = snapshot.docs
           .map(
-            (doc) => OrderModel.fromMap(
-              // Explicitly cast the returned data map
-              doc.data() as Map<String, dynamic>,
-              doc.id,
-            ),
+            (doc) =>
+                OrderModel.fromMap(doc.data() as Map<String, dynamic>, doc.id),
           )
           .toList();
 
-      // 3. Filter by status locally in Dart
       if (statuses == null || statuses.isEmpty) {
         return allOrdersInRange;
       }
@@ -101,6 +88,41 @@ class SalesRepository {
       }).toList();
     } catch (e) {
       throw Exception('Failed to fetch orders: $e');
+    }
+  }
+
+  Future<List<OrderModel>> getOrdersForBusinessDayStart({
+    required DateTime businessDayStartAt,
+    List<OrderStatus>? statuses,
+  }) async {
+    try {
+      final snapshot = await _ordersCollection
+          .where('businessDayStartAt', isEqualTo: businessDayStartAt)
+          .get(const GetOptions(source: Source.server));
+
+      if (snapshot.docs.isNotEmpty) {
+        final all = snapshot.docs
+            .map(
+              (doc) => OrderModel.fromMap(
+                doc.data() as Map<String, dynamic>,
+                doc.id,
+              ),
+            )
+            .toList();
+        if (statuses == null || statuses.isEmpty) return all;
+        return all
+            .where((order) => statuses.contains(order.orderStatus))
+            .toList();
+      }
+
+      // Fallback for older orders that were created before businessDayStartAt tagging.
+      return getOrdersByDateRange(
+        startDate: businessDayStartAt,
+        endDate: DateTime.now(),
+        statuses: statuses,
+      );
+    } catch (e) {
+      throw Exception('Failed to fetch business-day orders: $e');
     }
   }
 
@@ -161,30 +183,12 @@ class SalesRepository {
     OrderStatus? status,
   }) async {
     try {
-      final localOrders = await _getLocalOrders();
-      if (localOrders.isNotEmpty) {
-        return localOrders.where((order) {
-          final inRange =
-              order.createdAt.isAfter(
-                startDate.subtract(const Duration(milliseconds: 1)),
-              ) &&
-              order.createdAt.isBefore(
-                endDate.add(const Duration(milliseconds: 1)),
-              );
-          if (!inRange) return false;
-          if (status == null) return true;
-          return order.orderStatus == status;
-        }).length;
-      }
-
-      // Query by date range only
       Query query = _ordersCollection
           .where('createdAt', isGreaterThanOrEqualTo: startDate)
           .where('createdAt', isLessThanOrEqualTo: endDate);
 
-      final snapshot = await query.get();
+      final snapshot = await query.get(const GetOptions(source: Source.server));
 
-      // Filter count locally
       if (status == null) {
         return snapshot.docs.length;
       }
@@ -192,7 +196,6 @@ class SalesRepository {
       final statusString = status.toString().split('.').last;
 
       return snapshot.docs.where((doc) {
-        // FIX APPLIED HERE: Safely access data map and check for null
         final data = doc.data() as Map<String, dynamic>?;
         if (data == null) return false;
         return data['orderStatus'] == statusString;
@@ -205,21 +208,9 @@ class SalesRepository {
   /// Stream orders for real-time updates (for dashboard)
   Stream<List<OrderModel>> streamActiveOrders() {
     return _pollingStream(() async {
-      final localOrders = await _getLocalOrders();
-      if (localOrders.isNotEmpty) {
-        final active = localOrders.where((order) {
-          return order.orderStatus == OrderStatus.pending ||
-              order.orderStatus == OrderStatus.inProgress ||
-              order.orderStatus == OrderStatus.ready;
-        }).toList();
-
-        active.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        return active;
-      }
-
       final snapshot = await _ordersCollection
           .where('orderStatus', whereIn: ['pending', 'inProgress', 'ready'])
-          .get();
+          .get(const GetOptions(source: Source.server));
 
       return snapshot.docs
           .map(
