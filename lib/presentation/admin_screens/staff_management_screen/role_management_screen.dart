@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/models/role_model.dart';
-import 'package:hotel_management_system/permissions.dart';
 import 'package:hotel_management_system/presentation/client_screens/widgets/app_error_widget.dart';
 import 'package:hotel_management_system/presentation/client_screens/widgets/loading_indicator.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
@@ -37,16 +36,11 @@ class _RolesScreenState extends ConsumerState<RolesScreen> {
     if (user != null) {
       businessId = user.primarybusinessId;
       branchId = user.primaryBranchId;
-      final userNotifier = ref.read(userProvider.notifier);
-      canUpdateRole = userNotifier.hasPermissionOfCurrentUser(
-        Permissions.updateRole,
-      );
-      canDeleteRole = userNotifier.hasPermissionOfCurrentUser(
-        Permissions.deleteRole,
-      );
-      canAddRole = userNotifier.hasPermissionOfCurrentUser(
-        Permissions.createRole,
-      );
+      final roleName = user.role.name.trim().toLowerCase();
+      final isRoleAdmin = roleName == 'owner' || roleName.contains('admin');
+      canUpdateRole = isRoleAdmin;
+      canDeleteRole = isRoleAdmin;
+      canAddRole = isRoleAdmin;
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -107,6 +101,13 @@ class _RolesScreenState extends ConsumerState<RolesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!canUpdateRole && !canDeleteRole && !canAddRole) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Roles')),
+        body: const Center(child: Text('Only admin can manage roles.')),
+      );
+    }
+
     final state = ref.watch(
       roleProvider((branchId: branchId, businessId: businessId)),
     );
@@ -161,12 +162,12 @@ class _RolesScreenState extends ConsumerState<RolesScreen> {
           Expanded(child: _buildContent(state)),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          if (canAddRole) _showRoleDialog();
-        },
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: canAddRole
+          ? FloatingActionButton(
+              onPressed: _showRoleDialog,
+              child: const Icon(Icons.add),
+            )
+          : null,
     );
   }
 
@@ -232,27 +233,21 @@ class _RolesScreenState extends ConsumerState<RolesScreen> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: () {
-                if (canUpdateRole) {
-                  _showRoleDialog(role: role);
-                }
-              },
-              tooltip: 'Edit',
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete),
-              onPressed: () {
-                if (canDeleteRole) {
-                  _showDeleteDialog(role);
-                }
-              },
-              tooltip: 'Delete',
-            ),
+            if (canUpdateRole)
+              IconButton(
+                icon: const Icon(Icons.edit),
+                onPressed: () => _showRoleDialog(role: role),
+                tooltip: 'Edit',
+              ),
+            if (canDeleteRole)
+              IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: () => _showDeleteDialog(role),
+                tooltip: 'Delete',
+              ),
           ],
         ),
-        onTap: () => _showRoleDialog(role: role),
+        onTap: canUpdateRole ? () => _showRoleDialog(role: role) : null,
       ),
     );
   }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/features/super_admin/application/super_admin_providers.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/models/super_admin_nav_item.dart';
+import 'package:hotel_management_system/features/super_admin/presentation/sections/announcements_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/sections/billing_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/sections/businesses_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/sections/create_business_wizard_dialog.dart';
@@ -10,6 +11,7 @@ import 'package:hotel_management_system/features/super_admin/presentation/sectio
 import 'package:hotel_management_system/features/super_admin/presentation/sections/orders_analytics_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/sections/revenue_analytics_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/sections/subscriptions_section.dart';
+import 'package:hotel_management_system/features/super_admin/presentation/sections/users_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/widgets/saas_sidebar.dart';
 import 'package:hotel_management_system/routes/admin_app_routes.dart';
 import 'package:hotel_management_system/state_management/theme_provider.dart';
@@ -202,17 +204,7 @@ class _SuperAdminDashboardScreenState
       case SuperAdminSection.revenueAnalytics:
         return const RevenueAnalyticsSection();
       case SuperAdminSection.users:
-        return const ModulePlaceholderSection(
-          title: 'User Management',
-          description:
-              'Manage all users across businesses with tenant-aware filters.',
-          items: [
-            'Filter By Business, Role, Status, Branch, Country',
-            'Bulk User Actions',
-            'Role and Permission Updates',
-            'Suspension and Access Control',
-          ],
-        );
+        return const UsersSection();
       case SuperAdminSection.supportTickets:
         return const ModulePlaceholderSection(
           title: 'Support Center',
@@ -225,17 +217,7 @@ class _SuperAdminDashboardScreenState
           ],
         );
       case SuperAdminSection.announcements:
-        return const ModulePlaceholderSection(
-          title: 'Announcements',
-          description:
-              'Broadcast announcements to all or selected businesses via multiple channels.',
-          items: [
-            'In-App Notifications',
-            'Email Broadcasts',
-            'Push Notifications',
-            'SMS Campaigns',
-          ],
-        );
+        return const AnnouncementsSection();
       case SuperAdminSection.platformSettings:
         return const ModulePlaceholderSection(
           title: 'Platform Settings',

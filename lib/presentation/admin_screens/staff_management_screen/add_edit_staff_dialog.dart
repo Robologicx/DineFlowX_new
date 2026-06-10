@@ -1154,6 +1154,8 @@ class _AddEditStaffDialogState extends ConsumerState<AddEditStaffDialog> {
   late TextEditingController _emailController;
   late TextEditingController _nameController;
   late TextEditingController _phoneController;
+  late TextEditingController _passwordController;
+  late TextEditingController _confirmPasswordController;
 
   String? _selectedRoleId;
   String? _selectedRoleName;
@@ -1169,6 +1171,8 @@ class _AddEditStaffDialogState extends ConsumerState<AddEditStaffDialog> {
     _phoneController = TextEditingController(
       text: widget.staff?.phoneNumber ?? '',
     );
+    _passwordController = TextEditingController();
+    _confirmPasswordController = TextEditingController();
 
     if (_isEditMode) {
       _selectedRoleId = widget.staff!.role.id;
@@ -1211,6 +1215,8 @@ class _AddEditStaffDialogState extends ConsumerState<AddEditStaffDialog> {
     _emailController.dispose();
     _nameController.dispose();
     _phoneController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -1324,7 +1330,7 @@ class _AddEditStaffDialogState extends ConsumerState<AddEditStaffDialog> {
               border: const OutlineInputBorder(),
               helperText: _isEditMode
                   ? 'Email cannot be changed'
-                  : 'Invitation will be sent to this email',
+                  : 'Staff will login with this email',
             ),
             keyboardType: TextInputType.emailAddress,
             validator: (value) {
@@ -1340,6 +1346,51 @@ class _AddEditStaffDialogState extends ConsumerState<AddEditStaffDialog> {
             },
           ),
           const SizedBox(height: 16),
+
+          if (!_isEditMode) ...[
+            TextFormField(
+              controller: _passwordController,
+              decoration: const InputDecoration(
+                labelText: 'Password *',
+                hintText: 'Minimum 6 characters',
+                prefixIcon: Icon(Icons.lock),
+                border: OutlineInputBorder(),
+              ),
+              obscureText: true,
+              validator: (value) {
+                if (_isEditMode) return null;
+                if (value == null || value.isEmpty) {
+                  return 'Password is required';
+                }
+                if (value.length < 6) {
+                  return 'Password must be at least 6 characters';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _confirmPasswordController,
+              decoration: const InputDecoration(
+                labelText: 'Confirm Password *',
+                hintText: 'Re-enter password',
+                prefixIcon: Icon(Icons.lock_outline),
+                border: OutlineInputBorder(),
+              ),
+              obscureText: true,
+              validator: (value) {
+                if (_isEditMode) return null;
+                if (value == null || value.isEmpty) {
+                  return 'Please confirm password';
+                }
+                if (value != _passwordController.text) {
+                  return 'Passwords do not match';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
 
           // Name Field
           TextFormField(
@@ -1419,7 +1470,7 @@ class _AddEditStaffDialogState extends ConsumerState<AddEditStaffDialog> {
                   child: Text(
                     _isEditMode
                         ? 'Changes will take effect immediately.'
-                        : 'An invitation email will be sent to the staff member.',
+                        : 'Staff account is created now and can login immediately.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -1749,7 +1800,7 @@ class _AddEditStaffDialogState extends ConsumerState<AddEditStaffDialog> {
     final isSelected = _selectedExtraPermissions.containsKey(permissionId);
 
     return FilterChip(
-      label: Text(permissionName),
+      label: Text('$permissionId • $permissionName'),
       selected: isSelected,
       onSelected: (selected) {
         setState(() {
@@ -1793,6 +1844,7 @@ class _AddEditStaffDialogState extends ConsumerState<AddEditStaffDialog> {
     } else {
       success = await notifier.addStaffMember(
         email: _emailController.text.trim(),
+        password: _passwordController.text,
         roleId: _selectedRoleId!,
         roleName: _selectedRoleName ?? 'Staff Member',
         extraPermissions: _selectedExtraPermissions,
@@ -1815,6 +1867,22 @@ class _AddEditStaffDialogState extends ConsumerState<AddEditStaffDialog> {
                 : 'Staff member added successfully',
           ),
           backgroundColor: Colors.green,
+        ),
+      );
+      return;
+    }
+
+    if (mounted) {
+      final error = ref.read(userProvider).error;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error ??
+                (_isEditMode
+                    ? 'Failed to update staff member.'
+                    : 'Failed to add staff member.'),
+          ),
+          backgroundColor: Colors.red,
         ),
       );
     }

@@ -1291,7 +1291,12 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
                 content: Text('Printing Receipt...'),
               ),
             );
-            await ThermalPrinterService().printOrderLAN(order, type: '');
+            await ThermalPrinterService().printOrderLAN(
+              order,
+              type: '',
+              businessId: businessId,
+              branchId: branchId,
+            );
           },
         ),
       );

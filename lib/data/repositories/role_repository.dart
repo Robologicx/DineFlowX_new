@@ -22,6 +22,14 @@ class RoleRepository {
       .doc(_branchId)
       .collection('roles');
 
+  CollectionReference<Map<String, dynamic>> get _branchUsersRef =>
+      FirebaseFirestore.instance
+          .collection('businesses')
+          .doc(_businessId)
+          .collection('branches')
+          .doc(_branchId)
+          .collection('users');
+
   List<RoleModel> _mergeRolesPreferLocal({
     required List<RoleModel> local,
     required List<RoleModel> remote,
@@ -134,6 +142,83 @@ class RoleRepository {
       data: role.toMap(),
       merge: true,
     );
+
+    // Keep user snapshots in sync so permission changes apply immediately
+    // without waiting for a full profile rehydrate cycle.
+    await _syncUpdatedRoleToUsers(role);
+  }
+
+  Future<void> _syncUpdatedRoleToUsers(RoleModel role) async {
+    try {
+      final seenUids = <String>{};
+      final targetUserRefs = <DocumentReference<Map<String, dynamic>>>[];
+
+      final byRoleId = await _branchUsersRef
+          .where('roleId', isEqualTo: role.id)
+          .get();
+      for (final doc in byRoleId.docs) {
+        if (seenUids.add(doc.id)) {
+          targetUserRefs.add(doc.reference);
+        }
+      }
+
+      final byRoleName = await _branchUsersRef
+          .where('roleName', isEqualTo: role.name)
+          .get();
+      for (final doc in byRoleName.docs) {
+        if (seenUids.add(doc.id)) {
+          targetUserRefs.add(doc.reference);
+        }
+      }
+
+      if (targetUserRefs.isEmpty) return;
+
+      final rolePayload = role.toMap();
+      rolePayload['id'] = role.id;
+      rolePayload['businessId'] = _businessId;
+
+      final now = FieldValue.serverTimestamp();
+      final db = FirebaseFirestore.instance;
+
+      var batch = db.batch();
+      var opCount = 0;
+
+      Future<void> flushBatch() async {
+        if (opCount == 0) return;
+        await batch.commit();
+        batch = db.batch();
+        opCount = 0;
+      }
+
+      for (final branchUserRef in targetUserRefs) {
+        final uid = branchUserRef.id;
+        final rootUserRef = db.collection('users').doc(uid);
+
+        batch.set(branchUserRef, {
+          'roleId': role.id,
+          'roleName': role.name,
+          'updatedAt': now,
+        }, SetOptions(merge: true));
+        opCount++;
+
+        batch.set(rootUserRef, {
+          'roleId': role.id,
+          'roleName': role.name,
+          'role': rolePayload,
+          'updatedAt': now,
+        }, SetOptions(merge: true));
+        opCount++;
+
+        if (opCount >= 450) {
+          await flushBatch();
+        }
+      }
+
+      await flushBatch();
+    } catch (_) {
+      // Do not block role update if fan-out sync fails; next profile hydration
+      // will still resolve permissions from the role document.
+    }
   }
 
   Future<void> deleteRole(String roleId) async {

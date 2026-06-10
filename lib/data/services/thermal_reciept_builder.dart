@@ -19,8 +19,9 @@ class ThermalReceiptBuilder {
 
     // 1️⃣ Load logo
     Uint8List? logoBytes;
-    if (businessLogoUrl != null && businessLogoUrl.isNotEmpty) {
-      logoBytes = await _loadNetworkBytes(businessLogoUrl);
+    final logoUrl = businessLogoUrl?.trim() ?? '';
+    if (logoUrl.isNotEmpty) {
+      logoBytes = await _loadNetworkBytes(logoUrl);
     }
     if (logoBytes != null) {
       final image = img.decodeImage(logoBytes);

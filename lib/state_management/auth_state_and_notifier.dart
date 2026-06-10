@@ -29,15 +29,40 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   AuthNotifier(this.ref, this._service) : super(const AuthState()) {
     _initializeUser();
-    _authSubscription = _service.authStateChanges.listen((user) {
-      state = AuthState(firebaseUser: user, isLoading: false, error: null);
+    _authSubscription = _service.authStateChanges.listen((user) async {
+      final validatedUser = await _validateActiveSessionUser(user);
+      state = AuthState(
+        firebaseUser: validatedUser,
+        isLoading: false,
+        error: null,
+      );
     });
   }
 
   Future<void> _initializeUser() async {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser != null) {
-      state = state.copyWith(firebaseUser: currentUser);
+      final validatedUser = await _validateActiveSessionUser(currentUser);
+      state = state.copyWith(firebaseUser: validatedUser);
+    }
+  }
+
+  Future<User?> _validateActiveSessionUser(User? user) async {
+    if (user == null) return null;
+
+    try {
+      await user.reload();
+      final refreshed = FirebaseAuth.instance.currentUser;
+      return refreshed;
+    } on FirebaseAuthException catch (e) {
+      final code = e.code.toLowerCase();
+      if (code == 'user-not-found' || code == 'user-disabled') {
+        try {
+          await _service.signOut();
+        } catch (_) {}
+        return null;
+      }
+      rethrow;
     }
   }
 

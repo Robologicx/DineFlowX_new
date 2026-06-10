@@ -25,12 +25,17 @@ class OrderPdfGenerator {
   /// Generate PDF document
   static Future<pw.Document> generateOrderPdf({
     required OrderModel order,
+    String? businessId,
     String? roomName,
     bool includeTax = false, // Set to true when you want to enable tax
   }) async {
     final pdf = pw.Document();
+    final effectiveBusinessId =
+        (businessId != null && businessId.trim().isNotEmpty)
+        ? businessId.trim()
+        : BusinessRepository.temporaryBusinesshId;
     final business = await BusinessRepository().getBusinessById(
-      BusinessRepository.temporaryBusinesshId,
+      effectiveBusinessId,
     );
     final businessName = business?.title.trim().isNotEmpty == true
         ? business!.title.trim()

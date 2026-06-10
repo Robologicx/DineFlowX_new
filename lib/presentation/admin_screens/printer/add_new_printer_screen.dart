@@ -1,11 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hotel_management_system/state_management/app_providers.dart';
 
-class PrinterScreen extends StatelessWidget {
+class PrinterScreen extends ConsumerWidget {
   const PrinterScreen({super.key});
 
-  Future<void> _addPrinterDialog(BuildContext context) async {
+  bool _isValidIpv4(String value) {
+    final ipv4Pattern = RegExp(
+      r'^(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})$',
+    );
+    return ipv4Pattern.hasMatch(value);
+  }
+
+  Future<void> _addPrinterDialog(
+    BuildContext context, {
+    required String businessId,
+    required String branchId,
+  }) async {
     final TextEditingController ipController = TextEditingController();
 
     await showDialog(
@@ -38,15 +50,35 @@ class PrinterScreen extends StatelessWidget {
               label: const Text("Add Printer"),
               onPressed: () async {
                 final ip = ipController.text.trim();
-                if (ip.isNotEmpty) {
+                if (ip.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Printer IP is required.')),
+                  );
+                  return;
+                }
+                if (!_isValidIpv4(ip)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Enter a valid IPv4 address.'),
+                    ),
+                  );
+                  return;
+                }
+
+                try {
                   await FirebaseFirestore.instance
                       .collection('businesses')
-                      .doc(BusinessRepository.temporaryBusinesshId)
+                      .doc(businessId)
                       .collection('branches')
-                      .doc(BusinessRepository.temporaryBranchId)
+                      .doc(branchId)
                       .collection('printers')
                       .add({'ip': ip, 'isPrimary': false});
-                  Navigator.pop(context);
+                  if (context.mounted) Navigator.pop(context);
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to add printer: $e')),
+                  );
                 }
               },
             ),
@@ -56,23 +88,31 @@ class PrinterScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _deletePrinter(String docId) async {
+  Future<void> _deletePrinter({
+    required String businessId,
+    required String branchId,
+    required String docId,
+  }) async {
     await FirebaseFirestore.instance
         .collection('businesses')
-        .doc(BusinessRepository.temporaryBusinesshId)
+        .doc(businessId)
         .collection('branches')
-        .doc(BusinessRepository.temporaryBranchId)
+        .doc(branchId)
         .collection('printers')
         .doc(docId)
         .delete();
   }
 
-  Future<void> _setPrimary(String docId) async {
+  Future<void> _setPrimary({
+    required String businessId,
+    required String branchId,
+    required String docId,
+  }) async {
     final collection = FirebaseFirestore.instance
         .collection('businesses')
-        .doc(BusinessRepository.temporaryBusinesshId)
+        .doc(businessId)
         .collection('branches')
-        .doc(BusinessRepository.temporaryBranchId)
+        .doc(branchId)
         .collection('printers');
 
     final allDocs = await collection.get();
@@ -85,7 +125,21 @@ class PrinterScreen extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selectedUser = ref.watch(userProvider).selectedUser;
+    final businessId = selectedUser?.primarybusinessId.trim() ?? '';
+    final branchId = selectedUser?.primaryBranchId.trim() ?? '';
+
+    if (businessId.isEmpty || branchId.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text("Network Printers"),
+          centerTitle: true,
+        ),
+        body: const Center(child: Text('No active business/branch selected.')),
+      );
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final double width = constraints.maxWidth;
@@ -131,9 +185,9 @@ class PrinterScreen extends StatelessWidget {
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('businesses')
-                  .doc(BusinessRepository.temporaryBusinesshId)
+                  .doc(businessId)
                   .collection('branches')
-                  .doc(BusinessRepository.temporaryBranchId)
+                  .doc(branchId)
                   .collection('printers')
                   .snapshots(),
               builder: (context, snapshot) {
@@ -158,8 +212,13 @@ class PrinterScreen extends StatelessWidget {
                   return ListView.builder(
                     padding: const EdgeInsets.only(top: 16),
                     itemCount: printers.length,
-                    itemBuilder: (context, index) =>
-                        _buildPrinterCard(context, printers[index], width),
+                    itemBuilder: (context, index) => _buildPrinterCard(
+                      context,
+                      printers[index],
+                      width,
+                      businessId,
+                      branchId,
+                    ),
                   );
                 } else {
                   return GridView.builder(
@@ -171,15 +230,24 @@ class PrinterScreen extends StatelessWidget {
                       mainAxisSpacing: 16,
                     ),
                     itemCount: printers.length,
-                    itemBuilder: (context, index) =>
-                        _buildPrinterCard(context, printers[index], width),
+                    itemBuilder: (context, index) => _buildPrinterCard(
+                      context,
+                      printers[index],
+                      width,
+                      businessId,
+                      branchId,
+                    ),
                   );
                 }
               },
             ),
           ),
           floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => _addPrinterDialog(context),
+            onPressed: () => _addPrinterDialog(
+              context,
+              businessId: businessId,
+              branchId: branchId,
+            ),
             icon: const Icon(Icons.print, size: 26),
             label: const Text("Add Printer"),
           ),
@@ -193,6 +261,8 @@ class PrinterScreen extends StatelessWidget {
     BuildContext context,
     QueryDocumentSnapshot doc,
     double width,
+    String businessId,
+    String branchId,
   ) {
     final ip = doc['ip'] ?? '';
     final isPrimary = doc['isPrimary'] ?? false;
@@ -257,12 +327,20 @@ class PrinterScreen extends StatelessWidget {
                   tooltip: isPrimary
                       ? "Primary Printer (Active)"
                       : "Set as Primary",
-                  onPressed: () => _setPrimary(doc.id),
+                  onPressed: () => _setPrimary(
+                    businessId: businessId,
+                    branchId: branchId,
+                    docId: doc.id,
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.delete_outline, color: Colors.red),
                   tooltip: "Delete Printer",
-                  onPressed: () => _deletePrinter(doc.id),
+                  onPressed: () => _deletePrinter(
+                    businessId: businessId,
+                    branchId: branchId,
+                    docId: doc.id,
+                  ),
                 ),
               ],
             ),

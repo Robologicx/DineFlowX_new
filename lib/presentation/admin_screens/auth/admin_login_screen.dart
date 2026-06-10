@@ -1,6 +1,5 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:hotel_management_system/presentation/admin_screens/auth/admin_login_form.dart';
-import 'package:hotel_management_system/presentation/admin_screens/auth/admin_sign_up_form.dart';
 import 'package:hotel_management_system/presentation/admin_screens/auth/super_admin_login_form.dart';
 
 class AdminLoginScreen extends StatefulWidget {
@@ -28,14 +27,14 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
     int initialTab = 0;
     if (args is Map && args['initialTab'] is int) {
       initialTab = args['initialTab'] as int;
-      if (initialTab < 0 || initialTab > 2) {
+      if (initialTab < 0 || initialTab > 1) {
         initialTab = 0;
       }
     }
 
     return DefaultTabController(
       initialIndex: initialTab,
-      length: 3,
+      length: 2,
       child: Scaffold(
         body: Column(
           children: [
@@ -60,7 +59,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 TabBar(
                   tabs: [
                     Tab(text: 'Login'),
-                    Tab(text: 'Sign Up'),
                     Tab(text: 'Super Admin'),
                   ],
                 ),
@@ -70,7 +68,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
               child: TabBarView(
                 children: [
                   SingleChildScrollView(child: AdminLoginForm()),
-                  SingleChildScrollView(child: AdminSignUpForm()),
                   SingleChildScrollView(child: SuperAdminLoginForm()),
                 ],
               ),

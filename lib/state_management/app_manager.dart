@@ -1,5 +1,6 @@
 // AppManager to handle the entire initialization sequence
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/models/buisness_model.dart';
 import 'package:hotel_management_system/data/models/category_model.dart';
@@ -450,45 +451,33 @@ class AppManager {
       throw Exception('No user found after auth check');
     }
 
-    final usersRef = FirebaseFirestore.instance.collection('users');
     final authUid = currentUser.uid;
-    var uidToLoad = authUid;
 
-    final uidDoc = await usersRef.doc(authUid).get();
-    if (!uidDoc.exists) {
-      final email = (currentUser.email ?? '').trim().toLowerCase();
-      if (email.isEmpty) {
-        throw Exception('No email found for authenticated user.');
-      }
-
-      final byEmail = await usersRef
-          .where('email', isEqualTo: email)
-          .limit(1)
-          .get();
-
-      if (byEmail.docs.isEmpty) {
-        throw Exception('No user profile found for $email.');
-      }
-
-      final legacyDoc = byEmail.docs.first;
-      uidToLoad = legacyDoc.id;
-
-      // Self-heal legacy records where root user doc id differs from Firebase Auth uid.
-      if (legacyDoc.id != authUid) {
-        final data = legacyDoc.data();
-        await usersRef.doc(authUid).set({
-          ...data,
-          'uid': authUid,
-          'email': email,
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-        uidToLoad = authUid;
-      }
+    // Resolve and self-heal user profile via Admin SDK to avoid client-side rule denials.
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'resolveCurrentUserProfile',
+      );
+      await callable.call();
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(
+        'Profile resolution failed: ${e.code} ${e.message ?? ''}'.trim(),
+      );
+    } catch (e) {
+      throw Exception('Profile resolution failed: $e');
     }
 
     // Initialize user notifier
     final userNotifier = ref.read(userProvider.notifier);
-    await userNotifier.loadUser(uidToLoad);
+    await userNotifier.loadUser(authUid);
+
+    final userStateAfterLoad = ref.read(userProvider);
+    if (userStateAfterLoad.selectedUser == null) {
+      if (userStateAfterLoad.error != null) {
+        throw Exception(userStateAfterLoad.error);
+      }
+      throw Exception('No user profile found for authenticated account.');
+    }
 
     // Wait for user data to be fully loaded
     await _waitForUserData();

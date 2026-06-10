@@ -24,6 +24,8 @@ class _AdminDrawerMenuScreenState extends ConsumerState<AdminDrawerMenuScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(userProvider);
     final userNotifier = ref.read(userProvider.notifier);
+    final roleName = (user.selectedUser?.role.name ?? '').trim().toLowerCase();
+    final isRoleAdmin = roleName == 'owner' || roleName.contains('admin');
     final businessAsync = ref.watch(currentTenantBusinessProvider);
     final businessName = businessAsync.maybeWhen(
       data: (business) {
@@ -115,62 +117,88 @@ class _AdminDrawerMenuScreenState extends ConsumerState<AdminDrawerMenuScreen> {
                               () => _businessExpanded = !_businessExpanded,
                             ),
                             children: [
-                              _buildSubItem(Icons.apartment, "Branches", () {
-                                Navigator.pushNamed(
-                                  context,
-                                  AdminAppRoutes.businessManagement,
-                                );
-                              }),
-                              _buildSubItem(Icons.room, "Rooms", () {
-                                Navigator.pushNamed(
-                                  context,
-                                  AdminAppRoutes.roomsManagement,
-                                );
-                              }),
-                              _buildSubItem(Icons.table_view, "Tables", () {
-                                Navigator.pushNamed(
-                                  context,
-                                  AdminAppRoutes.tablesManagement,
-                                );
-                              }),
-                              _buildSubItem(
-                                Icons.qr_code,
-                                "QR Code Management",
-                                () {
+                              if (userNotifier.hasPermissionOfCurrentUser(
+                                Permissions.viewBranch,
+                              ))
+                                _buildSubItem(Icons.apartment, "Branches", () {
                                   Navigator.pushNamed(
                                     context,
-                                    AdminAppRoutes.qrCodeManagement,
+                                    AdminAppRoutes.businessManagement,
                                   );
-                                },
-                              ),
-                              _buildSubItem(Icons.report, "Reports", () {
-                                Navigator.pushNamed(
-                                  context,
-                                  AdminAppRoutes.reportsManagement,
-                                );
-                              }),
-                              _buildSubItem(Icons.money, "Expenses", () {
-                                Navigator.pushNamed(
-                                  context,
-                                  AdminAppRoutes.expenseManagement,
-                                );
-                              }),
-                              _buildSubItem(Icons.print, "Printers", () {
-                                Navigator.pushNamed(
-                                  context,
-                                  AdminAppRoutes.printer,
-                                );
-                              }),
+                                }),
+                              if (userNotifier.hasPermissionOfCurrentUser(
+                                Permissions.viewRoom,
+                              ))
+                                _buildSubItem(Icons.room, "Rooms", () {
+                                  Navigator.pushNamed(
+                                    context,
+                                    AdminAppRoutes.roomsManagement,
+                                  );
+                                }),
+                              if (userNotifier.hasPermissionOfCurrentUser(
+                                Permissions.viewTables,
+                              ))
+                                _buildSubItem(Icons.table_view, "Tables", () {
+                                  Navigator.pushNamed(
+                                    context,
+                                    AdminAppRoutes.tablesManagement,
+                                  );
+                                }),
+                              if (userNotifier.hasPermissionOfCurrentUser(
+                                Permissions.viewQRCodes,
+                              ))
+                                _buildSubItem(
+                                  Icons.qr_code,
+                                  "QR Code Management",
+                                  () {
+                                    Navigator.pushNamed(
+                                      context,
+                                      AdminAppRoutes.qrCodeManagement,
+                                    );
+                                  },
+                                ),
+                              if (userNotifier.hasPermissionOfCurrentUser(
+                                    Permissions.viewReports,
+                                  ) ||
+                                  userNotifier.hasPermissionOfCurrentUser(
+                                    Permissions.viewBusinessReports,
+                                  ) ||
+                                  userNotifier.hasPermissionOfCurrentUser(
+                                    Permissions.viewBranchReports,
+                                  ))
+                                _buildSubItem(Icons.report, "Reports", () {
+                                  Navigator.pushNamed(
+                                    context,
+                                    AdminAppRoutes.reportsManagement,
+                                  );
+                                }),
+                              if (userNotifier.hasPermissionOfCurrentUser(
+                                Permissions.viewReports,
+                              ))
+                                _buildSubItem(Icons.money, "Expenses", () {
+                                  Navigator.pushNamed(
+                                    context,
+                                    AdminAppRoutes.expenseManagement,
+                                  );
+                                }),
+                              if (userNotifier.hasPermissionOfCurrentUser(
+                                Permissions.viewSettings,
+                              ))
+                                _buildSubItem(Icons.print, "Printers", () {
+                                  Navigator.pushNamed(
+                                    context,
+                                    AdminAppRoutes.printer,
+                                  );
+                                }),
                               // _buildSubItem(Icons.account_balance, "Finance", () {}),
                               // _buildSubItem(Icons.analytics, "Analytics", () {}),
                             ],
                           )
                         : SizedBox.shrink(),
 
-                    // if (userNotifier.hasPermissionoFCurrentUser(
-                    //   Permissions.viewStaff,
-                    // ))
-                    if (true)
+                    if (userNotifier.hasPermissionOfCurrentUser(
+                      Permissions.viewStaff,
+                    ))
                       _buildExpandableSection(
                         title: "Staff Management",
                         icon: Icons.people,
@@ -184,18 +212,25 @@ class _AdminDrawerMenuScreenState extends ConsumerState<AdminDrawerMenuScreen> {
                               AdminAppRoutes.staffManagement,
                             );
                           }),
-                          _buildSubItem(Icons.security, "Permissions", () {
-                            Navigator.pushNamed(
-                              context,
-                              AdminAppRoutes.permissionsManagement,
-                            );
-                          }),
-                          _buildSubItem(Icons.security, "Roles", () {
-                            Navigator.pushNamed(
-                              context,
-                              AdminAppRoutes.rolesManagement,
-                            );
-                          }),
+                          if (userNotifier.hasPermissionOfCurrentUser(
+                            Permissions.viewPermission,
+                          ))
+                            _buildSubItem(Icons.security, "Permissions", () {
+                              Navigator.pushNamed(
+                                context,
+                                AdminAppRoutes.permissionsManagement,
+                              );
+                            }),
+                          if (isRoleAdmin &&
+                              userNotifier.hasPermissionOfCurrentUser(
+                                Permissions.viewRole,
+                              ))
+                            _buildSubItem(Icons.security, "Roles", () {
+                              Navigator.pushNamed(
+                                context,
+                                AdminAppRoutes.rolesManagement,
+                              );
+                            }),
                           // _buildSubItem(Icons.access_time, "Attendance", () {}),
                         ],
                       ),
@@ -280,10 +315,9 @@ class _AdminDrawerMenuScreenState extends ConsumerState<AdminDrawerMenuScreen> {
                         ],
                       ),
 
-                    // if (userNotifier.hasPermissionOfCurrentUser(
-                    //   Permissions.viewOwnProfile,
-                    // )
-                    if (true)
+                    if (userNotifier.hasPermissionOfCurrentUser(
+                      Permissions.viewOwnProfile,
+                    ))
                       _buildExpandableSection(
                         title: "Profile Management",
                         icon: Icons.person,

@@ -173,11 +173,15 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
       await printerService.printOrderLAN(
         order,
         type: 'Waiter Copy',
+        businessId: widget.businessId,
+        branchId: widget.branchId,
         timeout: const Duration(seconds: 3),
       );
       await printerService.printOrderLAN(
         order,
         type: 'Customer Copy',
+        businessId: widget.businessId,
+        branchId: widget.branchId,
         timeout: const Duration(seconds: 3),
       );
     } catch (_) {

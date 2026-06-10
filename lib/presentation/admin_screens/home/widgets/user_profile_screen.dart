@@ -1,4 +1,3 @@
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart' as fp;
 import 'package:flutter/material.dart';
@@ -242,19 +241,36 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
     }
   }
 
-  List<String> _getAllPermissions(UserModel user) {
-    final allPermissions = <String>[];
+  List<Map<String, dynamic>> _getPermissionItems(UserModel user) {
+    final merged = <String, Map<String, dynamic>>{};
 
-    // Add role permissions
     for (final permission in user.role.permissions) {
-      allPermissions.add(permission.name);
+      final id = permission.id.trim();
+      if (id.isEmpty) continue;
+      merged[id] = {
+        'id': id,
+        'label': permission.name.trim().isEmpty ? id : permission.name.trim(),
+        'isExtra': false,
+      };
     }
 
-    // Add extra permissions
-    allPermissions.addAll(user.extraPermissions.values);
+    for (final entry in user.extraPermissions.entries) {
+      final id = entry.key.trim();
+      if (id.isEmpty) continue;
+      final rawValue = entry.value.trim();
+      final label = (rawValue.isEmpty || rawValue.toLowerCase() == 'true')
+          ? id
+          : rawValue;
+      merged[id] = {'id': id, 'label': label, 'isExtra': true};
+    }
 
-    // Remove duplicates and sort
-    return allPermissions.toSet().toList()..sort();
+    final list = merged.values.toList(growable: false);
+    list.sort(
+      (a, b) => (a['id'] as String).toLowerCase().compareTo(
+        (b['id'] as String).toLowerCase(),
+      ),
+    );
+    return list;
   }
 
   @override
@@ -1016,7 +1032,7 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
   }
 
   Widget _buildPermissionsSection(UserModel user) {
-    final allPermissions = _getAllPermissions(user);
+    final permissionItems = _getPermissionItems(user);
 
     return Card(
       child: Padding(
@@ -1032,14 +1048,14 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
                 ),
                 const Spacer(),
                 Chip(
-                  label: Text('${allPermissions.length} total'),
+                  label: Text('${permissionItems.length} total'),
                   backgroundColor: Colors.grey.withOpacity(0.1),
                 ),
               ],
             ),
             const SizedBox(height: 16),
 
-            if (allPermissions.isEmpty)
+            if (permissionItems.isEmpty)
               const Text(
                 'No permissions assigned',
                 style: TextStyle(color: Colors.grey),
@@ -1048,12 +1064,15 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: allPermissions.map((permission) {
-                  final isExtraPermission = user.extraPermissions.values
-                      .contains(permission);
+                children: permissionItems.map((permission) {
+                  final isExtraPermission =
+                      (permission['isExtra'] as bool?) == true;
+                  final permissionId = (permission['id'] as String?) ?? '';
+                  final permissionLabel =
+                      (permission['label'] as String?) ?? permissionId;
 
                   return Chip(
-                    label: Text(permission),
+                    label: Text('$permissionId • $permissionLabel'),
                     backgroundColor: isExtraPermission
                         ? Colors.green.withOpacity(0.1)
                         : Colors.blue.withOpacity(0.1),
@@ -1065,8 +1084,13 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
                 }).toList(),
               ),
 
-            if (allPermissions.isNotEmpty) ...[
+            if (permissionItems.isNotEmpty) ...[
               const SizedBox(height: 12),
+              const Text(
+                'Permission IDs are shown first in each chip.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 8),
               Row(
                 children: [
                   Container(

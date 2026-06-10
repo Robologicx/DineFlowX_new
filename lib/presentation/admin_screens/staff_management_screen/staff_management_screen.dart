@@ -17,13 +17,50 @@ class StaffManagementScreen extends ConsumerStatefulWidget {
 class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
   String businessId = BusinessRepository.temporaryBusinesshId;
   String branchId = BusinessRepository.temporaryBranchId;
+  String _lastLoadedBusinessId = '';
+  String _lastLoadedBranchId = '';
+
+  Future<void> _refreshStaffForCurrentTenant({bool force = false}) async {
+    final selectedUser = ref.read(userProvider).selectedUser;
+    final resolvedBusinessId = selectedUser?.primarybusinessId.trim() ?? '';
+    final resolvedBranchId = selectedUser?.primaryBranchId.trim() ?? '';
+
+    if (resolvedBusinessId.isEmpty || resolvedBranchId.isEmpty) {
+      return;
+    }
+
+    final hasChanged =
+        resolvedBusinessId != _lastLoadedBusinessId ||
+        resolvedBranchId != _lastLoadedBranchId;
+
+    if (!force && !hasChanged) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        businessId = resolvedBusinessId;
+        branchId = resolvedBranchId;
+      });
+    } else {
+      businessId = resolvedBusinessId;
+      branchId = resolvedBranchId;
+    }
+
+    _lastLoadedBusinessId = resolvedBusinessId;
+    _lastLoadedBranchId = resolvedBranchId;
+
+    await ref
+        .read(userProvider.notifier)
+        .loadAllStaffMembers(businessId: businessId, branchId: branchId);
+  }
+
   @override
   void initState() {
     super.initState();
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref
-          .read(userProvider.notifier)
-          .loadAllStaffMembers(businessId: businessId, branchId: branchId);
+      _refreshStaffForCurrentTenant(force: true);
     });
   }
 
@@ -41,6 +78,19 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
             duration: const Duration(seconds: 3),
           ),
         );
+      }
+
+      final prevBusinessId = previous?.selectedUser?.primarybusinessId.trim();
+      final prevBranchId = previous?.selectedUser?.primaryBranchId.trim();
+      final nextBusinessId = next.selectedUser?.primarybusinessId.trim();
+      final nextBranchId = next.selectedUser?.primaryBranchId.trim();
+
+      if (nextBusinessId != null &&
+          nextBusinessId.isNotEmpty &&
+          nextBranchId != null &&
+          nextBranchId.isNotEmpty &&
+          (prevBusinessId != nextBusinessId || prevBranchId != nextBranchId)) {
+        _refreshStaffForCurrentTenant();
       }
     });
 
@@ -199,6 +249,21 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
     bool hasEditPermission,
     bool hasDeletePermission,
   ) {
+    final roleName = staff.role.name.trim().toLowerCase();
+    final roleId = staff.role.id.trim().toLowerCase();
+    final isOwnerAccount = roleName == 'owner' || roleId == 'owner';
+
+    final rolePermissionIds = staff.role.permissions
+        .map((p) => p.id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    final extraPermissionIds = staff.extraPermissions.keys
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    final hasAnyPermissionIds =
+        rolePermissionIds.isNotEmpty || extraPermissionIds.isNotEmpty;
+
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: availableWidth > 1200 ? 20 : 12,
@@ -292,6 +357,24 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                if (hasAnyPermissionIds)
+                  IconButton(
+                    icon: Icon(
+                      Icons.rule_folder_outlined,
+                      size: availableWidth > 800 ? 20 : 18,
+                    ),
+                    onPressed: () => _showPermissionIdsDialog(
+                      context,
+                      staff,
+                      rolePermissionIds,
+                      extraPermissionIds,
+                    ),
+                    tooltip: 'View Permission IDs',
+                    constraints: BoxConstraints(
+                      minWidth: availableWidth > 600 ? 48 : 40,
+                      minHeight: availableWidth > 600 ? 48 : 40,
+                    ),
+                  ),
                 hasEditPermission
                     ? IconButton(
                         icon: Icon(
@@ -306,7 +389,7 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
                         ),
                       )
                     : SizedBox.shrink(),
-                hasDeletePermission
+                (hasDeletePermission && !isOwnerAccount)
                     ? IconButton(
                         icon: Icon(
                           Icons.delete,
@@ -323,6 +406,58 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
                     : SizedBox.shrink(),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPermissionIdsDialog(
+    BuildContext context,
+    UserModel staff,
+    List<String> rolePermissionIds,
+    List<String> extraPermissionIds,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Permission IDs - ${staff.name.isNotEmpty ? staff.name : staff.email}',
+        ),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Role Permission IDs (${rolePermissionIds.length})',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                if (rolePermissionIds.isEmpty)
+                  const Text('None')
+                else
+                  SelectableText(rolePermissionIds.join('\n')),
+                const SizedBox(height: 16),
+                Text(
+                  'Extra Permission IDs (${extraPermissionIds.length})',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                if (extraPermissionIds.isEmpty)
+                  const Text('None')
+                else
+                  SelectableText(extraPermissionIds.join('\n')),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -347,6 +482,20 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
   }
 
   void _confirmDelete(BuildContext context, UserModel staff) {
+    final roleName = staff.role.name.trim().toLowerCase();
+    final roleId = staff.role.id.trim().toLowerCase();
+    final isOwnerAccount = roleName == 'owner' || roleId == 'owner';
+
+    if (isOwnerAccount) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Owner account cannot be deleted.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(

@@ -47,6 +47,19 @@ class PermissionModel {
 
   // ---------- Firestore Serialization ----------
 
+  static DateTime _parseDate(dynamic value) {
+    if (value is DateTime) return value;
+    if (value is Timestamp) return value.toDate();
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is String) {
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) return parsed;
+      final millis = int.tryParse(value);
+      if (millis != null) return DateTime.fromMillisecondsSinceEpoch(millis);
+    }
+    return DateTime.now();
+  }
+
   Map<String, dynamic> toMap() {
     // Conversion to avid issues with DateTime serialization
 
@@ -64,12 +77,6 @@ class PermissionModel {
   }
 
   factory PermissionModel.fromMap(Map<String, dynamic> map) {
-    // To avoid conversion issues., make dataTime strings
-    if (map['createdAt']!.runtimeType == DateTime ||
-        map['updatedAt']!.runtimeType == DateTime) {
-      map['createdAt'] = map['createdAt'].toIso8601String();
-      map['updatedAt'] = map['updatedAt'].toIso8601String();
-    }
     return PermissionModel(
       id: map['id'],
       name: map['name'] ?? '',
@@ -78,8 +85,8 @@ class PermissionModel {
       isActive: map['isActive'] ?? true,
       isShowingToAllAdmins: map['isShowingToAllAdmins'] ?? true,
       isSystemDefined: map['isSystemDefined'] ?? true,
-      createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
-      updatedAt: DateTime.tryParse(map['updatedAt'] ?? '') ?? DateTime.now(),
+      createdAt: _parseDate(map['createdAt']),
+      updatedAt: _parseDate(map['updatedAt']),
     );
   }
 

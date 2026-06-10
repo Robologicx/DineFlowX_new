@@ -7,12 +7,15 @@ import 'package:hotel_management_system/data/services/thermal_reciept_builder.da
 
 class ThermalPrinterService {
   /// 🔹 Fetch the IP address of the primary printer from Firestore
-  Future<String?> getPrimaryPrinterIP() async {
+  Future<String?> getPrimaryPrinterIP({
+    required String businessId,
+    required String branchId,
+  }) async {
     final snapshot = await FirebaseFirestore.instance
         .collection('businesses')
-        .doc(BusinessRepository.temporaryBusinesshId)
+        .doc(businessId)
         .collection('branches')
-        .doc(BusinessRepository.temporaryBranchId)
+        .doc(branchId)
         .collection('printers')
         .where('isPrimary', isEqualTo: true)
         .limit(1)
@@ -29,13 +32,26 @@ class ThermalPrinterService {
   Future<void> printOrderLAN(
     OrderModel order, {
     required String type,
+    String? businessId,
+    String? branchId,
     int printerPort = 9100,
     Duration timeout = const Duration(seconds: 3),
   }) async {
     Socket? socket;
-    final printerIp = await getPrimaryPrinterIP();
+    final effectiveBusinessId =
+        (businessId != null && businessId.trim().isNotEmpty)
+        ? businessId.trim()
+        : BusinessRepository.temporaryBusinesshId;
+    final effectiveBranchId = (branchId != null && branchId.trim().isNotEmpty)
+        ? branchId.trim()
+        : BusinessRepository.temporaryBranchId;
+
+    final printerIp = await getPrimaryPrinterIP(
+      businessId: effectiveBusinessId,
+      branchId: effectiveBranchId,
+    );
     final business = await BusinessRepository().getBusinessById(
-      BusinessRepository.temporaryBusinesshId,
+      effectiveBusinessId,
     );
 
     if (printerIp == null || printerIp.isEmpty) {

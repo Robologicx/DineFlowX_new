@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
 import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
 import '../models/user_model.dart';
@@ -41,17 +43,28 @@ class UserRepository {
   Stream<UserModel?> _hybridUserStream(String uid) {
     return Stream.multi((controller) {
       UserModel? latestRemote;
+      bool hasRemoteSnapshot = false;
       StreamSubscription<DocumentSnapshot<Object?>>? remoteSub;
       Timer? localTick;
       bool isCancelled = false;
 
       Future<void> emitMerged() async {
         if (isCancelled) return;
+
+        // If remote has confirmed the document is deleted, do not revive it
+        // from stale local cache.
+        if (hasRemoteSnapshot && latestRemote == null) {
+          controller.add(null);
+          return;
+        }
+
         final localDoc = await OfflineLocalReadService.instance
             .getGlobalDocument(collectionName: 'users', documentId: uid);
         if (isCancelled) return;
 
-        if (localDoc != null) {
+        if (latestRemote != null) {
+          controller.add(latestRemote);
+        } else if (localDoc != null) {
           controller.add(UserModel.fromMap(uid, localDoc));
         } else {
           controller.add(latestRemote);
@@ -67,6 +80,7 @@ class UserRepository {
           .snapshots()
           .listen(
             (doc) {
+              hasRemoteSnapshot = true;
               if (doc.exists && doc.data() != null) {
                 latestRemote = UserModel.fromMap(
                   uid,
@@ -104,6 +118,13 @@ class UserRepository {
   /// Get a user by ID
   Future<UserModel?> getUserById(String uid) async {
     try {
+      final doc = await _usersCollection.doc(uid).get();
+      if (doc.exists) {
+        return UserModel.fromMap(doc.id, doc.data()! as Map<String, dynamic>);
+      }
+      return null;
+    } catch (e) {
+      // Fallback to local only when remote is unavailable.
       final localDoc = await OfflineLocalReadService.instance.getGlobalDocument(
         collectionName: 'users',
         documentId: uid,
@@ -111,14 +132,7 @@ class UserRepository {
       if (localDoc != null) {
         return UserModel.fromMap(uid, localDoc);
       }
-
-      final doc = await _usersCollection.doc(uid).get();
-      if (doc.exists) {
-        return UserModel.fromMap(doc.id, doc.data()! as Map<String, dynamic>);
-      }
-      return null;
-    } catch (e) {
-      return null;
+      throw Exception('Failed to load user profile: $e');
     }
   }
 
@@ -261,6 +275,7 @@ class UserRepository {
     required String branchId,
     String? uid, // null for new user, provided for update
     required String roleId,
+    String? roleName,
     required Map<String, String> extraPermissions,
     String? email, // Required for new user
     String? name,
@@ -268,6 +283,34 @@ class UserRepository {
   }) async {
     try {
       String userId;
+      final nowIso = DateTime.now().toIso8601String();
+
+      // Try to hydrate role payload so root user stream receives fresh role permissions.
+      Map<String, dynamic>? rolePayload;
+      try {
+        final roleDoc = await FirebaseFirestore.instance
+            .collection('businesses')
+            .doc(businessId)
+            .collection('branches')
+            .doc(branchId)
+            .collection('roles')
+            .doc(roleId)
+            .get();
+
+        if (roleDoc.exists && roleDoc.data() != null) {
+          final roleData = roleDoc.data()!;
+          rolePayload = {
+            'id': roleId,
+            'businessId': businessId,
+            'name': (roleData['name'] ?? roleName ?? roleId).toString(),
+            'permissions': roleData['permissions'] ?? [],
+            'createdAt': roleData['createdAt'] ?? nowIso,
+            'updatedAt': nowIso,
+          };
+        }
+      } catch (_) {
+        // Keep write path resilient if role lookup fails due to rules/network.
+      }
 
       if (uid == null || uid.isEmpty) {
         // Create new user at root level
@@ -283,12 +326,16 @@ class UserRepository {
             'primarybusinessId': businessId,
             'primaryBranchId': branchId,
             'isStaffMember': true,
+            'roleId': roleId,
+            'roleName': roleName ?? roleId,
+            'role': rolePayload,
+            'extraPermissions': extraPermissions,
             'favoriteProductIds': [],
             'userLocationText': null,
             'userLatlng': null,
             'deliveryAddresses': [],
-            'createdAt': DateTime.now().toIso8601String(),
-            'updatedAt': DateTime.now().toIso8601String(),
+            'createdAt': nowIso,
+            'updatedAt': nowIso,
           },
           merge: false,
         );
@@ -300,7 +347,11 @@ class UserRepository {
           'primarybusinessId': businessId,
           'primaryBranchId': branchId,
           'isStaffMember': true,
-          'updatedAt': DateTime.now().toIso8601String(),
+          'roleId': roleId,
+          'roleName': roleName ?? roleId,
+          'role': rolePayload,
+          'extraPermissions': extraPermissions,
+          'updatedAt': nowIso,
         };
 
         // Add optional fields if provided
@@ -317,23 +368,165 @@ class UserRepository {
       }
 
       // Set/Update branch-specific user info
-      final branchPayload = {
+      final branchPayload = <String, dynamic>{
         'uid': userId,
         'roleId': roleId,
+        'roleName': roleName,
         'extraPermissions': extraPermissions,
-        'createdAt': DateTime.now().toIso8601String(),
-        'updatedAt': DateTime.now().toIso8601String(),
+        'email': email,
+        'name': name,
+        'phoneNumber': phoneNumber,
+        'isStaffMember': true,
+        'primarybusinessId': businessId,
+        'primaryBranchId': branchId,
+        'createdAt': nowIso,
+        'updatedAt': nowIso,
       };
 
-      await OfflineFirestoreWriteQueueService.instance.setOrQueue(
-        documentPath: 'businesses/$businessId/branches/$branchId/users/$userId',
-        data: branchPayload,
-        merge: true,
-      );
+      branchPayload.removeWhere((key, value) {
+        if (value == null) return true;
+        if (value is String && value.trim().isEmpty) return true;
+        return false;
+      });
+
+      final branchWriteSuccess = await OfflineFirestoreWriteQueueService
+          .instance
+          .setOrQueue(
+            documentPath:
+                'businesses/$businessId/branches/$branchId/users/$userId',
+            data: branchPayload,
+            merge: true,
+          );
+
+      if (!branchWriteSuccess) {
+        throw Exception('Failed to create branch-specific staff profile');
+      }
 
       return userId;
     } catch (e) {
       rethrow;
+    }
+  }
+
+  Future<String> createStaffAuthUser({
+    required String businessId,
+    required String branchId,
+    required String email,
+    required String password,
+    required String roleId,
+    required String roleName,
+    required Map<String, String> extraPermissions,
+    String? name,
+    String? phoneNumber,
+  }) async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        throw Exception('You are not logged in. Please login again and retry.');
+      }
+
+      await currentUser.getIdToken(true);
+
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'createBranchStaffUser',
+      );
+
+      final result = await callable.call(<String, dynamic>{
+        'businessId': businessId,
+        'branchId': branchId,
+        'email': email,
+        'password': password,
+        'roleId': roleId,
+        'roleName': roleName,
+        'extraPermissions': extraPermissions,
+        'name': name,
+        'phoneNumber': phoneNumber,
+      });
+
+      final data = Map<String, dynamic>.from(
+        (result.data as Map?) ?? const <String, dynamic>{},
+      );
+      final uid = (data['uid'] ?? '').toString().trim();
+      if (uid.isEmpty) {
+        throw Exception('Staff auth user was not created.');
+      }
+
+      return uid;
+    } on FirebaseFunctionsException catch (e) {
+      final detailsText = e.details == null ? '' : ' Details: ${e.details}';
+      throw Exception(
+        '${e.code}: ${e.message ?? 'Failed to create staff login account.'}$detailsText',
+      );
+    }
+  }
+
+  Future<void> updateStaffAuthUser({
+    required String businessId,
+    required String branchId,
+    required String uid,
+    required String roleId,
+    String? roleName,
+    required Map<String, String> extraPermissions,
+    String? name,
+    String? phoneNumber,
+  }) async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        throw Exception('You are not logged in. Please login again and retry.');
+      }
+
+      await currentUser.getIdToken(true);
+
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'updateBranchStaffUser',
+      );
+
+      await callable.call(<String, dynamic>{
+        'businessId': businessId,
+        'branchId': branchId,
+        'uid': uid,
+        'roleId': roleId,
+        'roleName': roleName,
+        'extraPermissions': extraPermissions,
+        'name': name,
+        'phoneNumber': phoneNumber,
+      });
+    } on FirebaseFunctionsException catch (e) {
+      final detailsText = e.details == null ? '' : ' Details: ${e.details}';
+      throw Exception(
+        '${e.code}: ${e.message ?? 'Failed to update staff account.'}$detailsText',
+      );
+    }
+  }
+
+  Future<void> deleteStaffAuthUser({
+    required String businessId,
+    required String branchId,
+    required String uid,
+  }) async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        throw Exception('You are not logged in. Please login again and retry.');
+      }
+
+      await currentUser.getIdToken(true);
+
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'deleteBranchStaffUser',
+      );
+
+      await callable.call(<String, dynamic>{
+        'businessId': businessId,
+        'branchId': branchId,
+        'uid': uid,
+      });
+    } on FirebaseFunctionsException catch (e) {
+      final detailsText = e.details == null ? '' : ' Details: ${e.details}';
+      throw Exception(
+        '${e.code}: ${e.message ?? 'Failed to delete staff account.'}$detailsText',
+      );
     }
   }
 
@@ -394,12 +587,13 @@ class UserRepository {
         if (isCancelled) return;
 
         final merged = <String, Map<String, dynamic>>{};
-        for (final row in latestRemote) {
-          merged[(row['uid'] ?? '').toString()] = row;
-        }
         for (final row in local) {
           final uid = (row['__documentId'] ?? '').toString();
           merged[uid] = {...row, 'uid': uid};
+        }
+        for (final row in latestRemote) {
+          // Prefer server truth when online.
+          merged[(row['uid'] ?? '').toString()] = row;
         }
         controller.add(merged.values.toList(growable: false));
       }
@@ -463,10 +657,11 @@ class UserRepository {
           .toList(growable: false);
 
       final merged = <String, Map<String, dynamic>>{};
-      for (final item in remote) {
+      for (final item in local) {
         merged[(item['uid'] ?? '').toString()] = item;
       }
-      for (final item in local) {
+      for (final item in remote) {
+        // Prefer server truth when online.
         merged[(item['uid'] ?? '').toString()] = item;
       }
       return merged.values.toList(growable: false);
@@ -549,9 +744,50 @@ class UserRepository {
     required String branchId,
   }) async {
     try {
+      final nowIso = DateTime.now().toIso8601String();
+      String roleName = roleId;
+      Map<String, dynamic>? rolePayload;
+
+      try {
+        final roleDoc = await FirebaseFirestore.instance
+            .collection('businesses')
+            .doc(businessId)
+            .collection('branches')
+            .doc(branchId)
+            .collection('roles')
+            .doc(roleId)
+            .get();
+
+        if (roleDoc.exists && roleDoc.data() != null) {
+          final roleData = roleDoc.data()!;
+          roleName = (roleData['name'] ?? roleId).toString();
+          rolePayload = {
+            'id': roleId,
+            'businessId': businessId,
+            'name': roleName,
+            'permissions': roleData['permissions'] ?? [],
+            'createdAt': roleData['createdAt'] ?? nowIso,
+            'updatedAt': nowIso,
+          };
+        }
+      } catch (_) {
+        // Keep role update resilient.
+      }
+
       await OfflineFirestoreWriteQueueService.instance.setOrQueue(
         documentPath: 'businesses/$businessId/branches/$branchId/users/$uid',
-        data: {'roleId': roleId, 'updatedAt': DateTime.now().toIso8601String()},
+        data: {'roleId': roleId, 'roleName': roleName, 'updatedAt': nowIso},
+        merge: true,
+      );
+
+      await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+        documentPath: 'users/$uid',
+        data: {
+          'roleId': roleId,
+          'roleName': roleName,
+          'role': rolePayload,
+          'updatedAt': nowIso,
+        },
         merge: true,
       );
     } catch (e) {
@@ -567,12 +803,16 @@ class UserRepository {
     required String branchId,
   }) async {
     try {
+      final nowIso = DateTime.now().toIso8601String();
       await OfflineFirestoreWriteQueueService.instance.setOrQueue(
         documentPath: 'businesses/$businessId/branches/$branchId/users/$uid',
-        data: {
-          'extraPermissions': extraPermissions,
-          'updatedAt': DateTime.now().toIso8601String(),
-        },
+        data: {'extraPermissions': extraPermissions, 'updatedAt': nowIso},
+        merge: true,
+      );
+
+      await OfflineFirestoreWriteQueueService.instance.setOrQueue(
+        documentPath: 'users/$uid',
+        data: {'extraPermissions': extraPermissions, 'updatedAt': nowIso},
         merge: true,
       );
     } catch (e) {

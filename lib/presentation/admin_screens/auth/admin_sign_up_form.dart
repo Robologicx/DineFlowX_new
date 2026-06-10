@@ -20,6 +20,7 @@ class _AdminSignUpFormState extends ConsumerState<AdminSignUpForm> {
   final TextEditingController passwordController = TextEditingController();
   final TextEditingController nameController = TextEditingController();
   final formKey = GlobalKey<FormState>();
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -30,56 +31,87 @@ class _AdminSignUpFormState extends ConsumerState<AdminSignUpForm> {
   }
 
   void signUp(BuildContext context) async {
-    //take instance of user repo to check if user exists
-    final existingUser = await SignUpHelper.checkUserExistsByEmail(
-      emailController.text,
-    );
-    if (existingUser != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('User with this email already exists')),
-      );
-      if (existingUser.isStaffMember == true) {
-        // Means admin/owner already created this user as staff member
-        // Now just need to complete signup by setting password
-        // and loading complete user data
-        final FirebaseAuth auth = FirebaseAuth.instance;
-        final userCred = await auth.createUserWithEmailAndPassword(
-          email: emailController.text,
-          password: passwordController.text,
-        );
-        // User properly signed up? If not, throw exception
-        if (userCred.user == null) {
-          throw Exception('Signup failed');
-        } else {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('User created')));
-        }
-        // Lets complete signup by loading complete user data
-        // await SignUpHelper.completeUserSignup(
-        //   uid: existingUser.uid,
-        //   email: emailController.text,
-        //   name: nameController.text,
-        //   ref: ref, businessId: '', branchId: '', phone: '',
-        // );
-        // Navigator.of(context).pop();
-        // return;
-      }
-    }
-    // Proceed with additional setup for the new user
+    if (_isSubmitting) return;
+    final email = emailController.text.trim();
+    final password = passwordController.text.trim();
+    final name = nameController.text.trim();
 
-    Navigator.of(context).pop();
-    final state = ref.read(authNotifierProvider);
-    if (state.isLoggedIn) {
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Email and password are required.')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final FirebaseAuth auth = FirebaseAuth.instance;
+      final userCred = await auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      final authUser = userCred.user;
+      if (authUser == null) {
+        throw Exception('Signup failed');
+      }
+
+      final pendingStaff = await SignUpHelper.findPendingStaffByEmail(
+        email,
+      ).timeout(const Duration(seconds: 6), onTimeout: () => null);
+
+      if (pendingStaff != null) {
+        try {
+          await SignUpHelper.claimPendingStaffForAuthUser(
+            authUid: authUser.uid,
+            email: email,
+            displayName: name,
+            pendingStaff: pendingStaff,
+          );
+        } on FirebaseException catch (e) {
+          if (e.code != 'permission-denied') {
+            rethrow;
+          }
+        }
+      } else {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(authUser.uid)
+            .set({
+              'uid': authUser.uid,
+              'email': email,
+              'name': name,
+              'isStaffMember': false,
+              'primarybusinessId': '',
+              'primaryBranchId': '',
+              'createdAt': DateTime.now().toIso8601String(),
+              'updatedAt': DateTime.now().toIso8601String(),
+            }, SetOptions(merge: true));
+      }
+
+      await ref.read(userProvider.notifier).loadUser(authUser.uid);
+
+      if (!mounted) return;
       Navigator.pushNamedAndRemoveUntil(
         context,
         AdminAppRoutes.splash,
         (route) => false,
       );
-    } else if (state.error != null) {
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(state.error!)));
+      ).showSnackBar(SnackBar(content: Text(e.message ?? 'Signup failed')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
     }
   }
 
@@ -118,7 +150,7 @@ class _AdminSignUpFormState extends ConsumerState<AdminSignUpForm> {
             ),
             SizedBox(height: 20),
             CustomButton(
-              text: 'SignUp',
+              text: _isSubmitting ? 'Signing up...' : 'SignUp',
               onTap: () {
                 signUp(context);
               },
@@ -134,6 +166,124 @@ class _AdminSignUpFormState extends ConsumerState<AdminSignUpForm> {
 /// These functions handle the staff member signup flow using Riverpod
 
 class SignUpHelper {
+  /// Find pending invited staff record in branch users collection by email.
+  static Future<
+    ({
+      String businessId,
+      String branchId,
+      String docId,
+      Map<String, dynamic> data,
+    })?
+  >
+  findPendingStaffByEmail(String email) async {
+    final normalizedEmail = email.trim();
+    if (normalizedEmail.isEmpty) return null;
+
+    QuerySnapshot<Map<String, dynamic>> querySnapshot;
+    try {
+      querySnapshot = await FirebaseFirestore.instance
+          .collectionGroup('users')
+          .where('email', isEqualTo: normalizedEmail)
+          .where('isStaffMember', isEqualTo: true)
+          .limit(1)
+          .get();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        return null;
+      }
+      rethrow;
+    }
+
+    if (querySnapshot.docs.isEmpty) return null;
+
+    final doc = querySnapshot.docs.first;
+    final segments = doc.reference.path.split('/');
+    // businesses/{businessId}/branches/{branchId}/users/{uid}
+    if (segments.length < 6 ||
+        segments[0] != 'businesses' ||
+        segments[2] != 'branches' ||
+        segments[4] != 'users') {
+      return null;
+    }
+
+    return (
+      businessId: segments[1],
+      branchId: segments[3],
+      docId: doc.id,
+      data: doc.data(),
+    );
+  }
+
+  /// Bind pending branch-staff record to real Firebase Auth UID.
+  static Future<void> claimPendingStaffForAuthUser({
+    required String authUid,
+    required String email,
+    String? displayName,
+    required ({
+      String businessId,
+      String branchId,
+      String docId,
+      Map<String, dynamic> data,
+    })
+    pendingStaff,
+  }) async {
+    final nowIso = DateTime.now().toIso8601String();
+    final businessId = pendingStaff.businessId;
+    final branchId = pendingStaff.branchId;
+    final sourceData = pendingStaff.data;
+
+    final rootPayload = {
+      'uid': authUid,
+      'email': email,
+      'name': (displayName != null && displayName.trim().isNotEmpty)
+          ? displayName.trim()
+          : (sourceData['name'] ?? ''),
+      'phoneNumber': sourceData['phoneNumber'],
+      'profileImageUrl': null,
+      'primarybusinessId': businessId,
+      'primaryBranchId': branchId,
+      'isStaffMember': true,
+      'favoriteProductIds': sourceData['favoriteProductIds'] ?? [],
+      'userLocationText': sourceData['userLocationText'],
+      'userLatlng': sourceData['userLatlng'],
+      'deliveryAddresses': sourceData['deliveryAddresses'] ?? [],
+      'updatedAt': nowIso,
+      'createdAt': sourceData['createdAt'] ?? nowIso,
+    };
+
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(authUid)
+        .set(rootPayload, SetOptions(merge: true));
+
+    final branchPayload = {
+      ...sourceData,
+      'uid': authUid,
+      'email': email,
+      'name': rootPayload['name'],
+      'isStaffMember': true,
+      'primarybusinessId': businessId,
+      'primaryBranchId': branchId,
+      'updatedAt': nowIso,
+      'createdAt': sourceData['createdAt'] ?? nowIso,
+    };
+
+    final branchUsersRef = FirebaseFirestore.instance
+        .collection('businesses')
+        .doc(businessId)
+        .collection('branches')
+        .doc(branchId)
+        .collection('users');
+
+    await branchUsersRef
+        .doc(authUid)
+        .set(branchPayload, SetOptions(merge: true));
+
+    if (pendingStaff.docId != authUid) {
+      await branchUsersRef.doc(pendingStaff.docId).delete();
+    }
+  }
+
   /// Check if user exists by email in root users collection
   /// Returns UserModel if found, null otherwise
   static Future<UserModel?> checkUserExistsByEmail(String email) async {

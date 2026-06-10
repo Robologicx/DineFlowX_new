@@ -54,12 +54,23 @@ class UserService {
 
       if (userDetails != null) {
         //-------------------------------Merge branch specific details into user model----------------------------------//
-        Timestamp timestamp =
-            userDetails['createdAt']; // Assuming 'createdAt' is the field with the Timestamp
-        DateTime createdAt = timestamp.toDate();
+        DateTime parseDateTime(dynamic value) {
+          if (value is Timestamp) return value.toDate();
+          if (value is DateTime) return value;
+          if (value is String) {
+            final parsed = DateTime.tryParse(value);
+            if (parsed != null) return parsed;
+            final ms = int.tryParse(value);
+            if (ms != null) return DateTime.fromMillisecondsSinceEpoch(ms);
+          }
+          if (value is int) {
+            return DateTime.fromMillisecondsSinceEpoch(value);
+          }
+          return DateTime.now();
+        }
 
-        Timestamp updatedAtTimestamp = userDetails['updatedAt'];
-        DateTime updatedAt = updatedAtTimestamp.toDate();
+        final createdAt = parseDateTime(userDetails['createdAt']);
+        final updatedAt = parseDateTime(userDetails['updatedAt']);
 
         final rawPermissions = userDetails['permissions'];
         final List<PermissionModel> parsedPermissions = (rawPermissions is List)
@@ -111,47 +122,80 @@ class UserService {
         return user;
       }
 
-      final roleId = user.role.id.trim();
-      if (roleId.isEmpty) {
-        return user;
-      }
-
-      final roleRepository = _roleRepoFactory(
-        user.primaryBranchId,
-        user.primarybusinessId,
-      );
-
-      final permissionRepository = _permissionRepoFactory(
-        user.primaryBranchId,
-        user.primarybusinessId,
-      );
-
-      // Now role model is complete with permissions.
-      RoleModel? role = await roleRepository.getRoleById(roleId);
-      if (role != null) {
-        role = role.copyWith(
-          permissions: await permissionRepository.getPermissionsByIds(
-            role.permissions.map((p) => p.id).toList(),
-          ),
+      try {
+        final roleRepository = _roleRepoFactory(
+          user.primaryBranchId,
+          user.primarybusinessId,
         );
-      }
 
-      // Merging extra permissions if any
-      if (user.extraPermissions.isNotEmpty) {
-        final extraPermissions = await permissionRepository.getPermissionsByIds(
-          user.extraPermissions.keys.map((p) => p.toString()).toList(),
+        final permissionRepository = _permissionRepoFactory(
+          user.primaryBranchId,
+          user.primarybusinessId,
         );
-        // Filter only active permissions
-        final activeExtraPermissions = extraPermissions
-            .where((permission) => permission.isActive)
-            .toList();
 
-        if (role?.permissions == null) {
-          role = role?.copyWith(permissions: activeExtraPermissions);
-        } else {
-          role?.permissions.addAll(activeExtraPermissions);
+        // Resolve role from roleId, with fallback by role name for legacy staff docs.
+        final roleId = user.role.id.trim();
+        final roleName = user.role.name.trim().toLowerCase();
+
+        RoleModel? role;
+
+        if (roleId.isNotEmpty) {
+          role = await roleRepository.getRoleById(roleId);
         }
-        user = user.copyWith(role: role);
+
+        if (role == null && roleName.isNotEmpty) {
+          final allRoles = await roleRepository.getRolesByBusiness(
+            user.primarybusinessId,
+          );
+          for (final candidate in allRoles) {
+            if (candidate.name.trim().toLowerCase() == roleName) {
+              role = candidate;
+              break;
+            }
+          }
+        }
+
+        if (role != null) {
+          final rolePermissionIds = role.permissions
+              .map((p) => p.id.trim())
+              .where((id) => id.isNotEmpty)
+              .toList(growable: false);
+
+          final hydratedRolePermissions = await permissionRepository
+              .getPermissionsByIds(rolePermissionIds);
+
+          role = role.copyWith(
+            permissions: hydratedRolePermissions.isNotEmpty
+                ? hydratedRolePermissions
+                : role.permissions,
+          );
+        }
+
+        // Merging extra permissions if any
+        if (user.extraPermissions.isNotEmpty && role != null) {
+          final extraPermissions = await permissionRepository
+              .getPermissionsByIds(
+                user.extraPermissions.keys.map((p) => p.toString()).toList(),
+              );
+          // Filter only active permissions
+          final activeExtraPermissions = extraPermissions
+              .where((permission) => permission.isActive)
+              .toList();
+
+          final mergedPermissions = <PermissionModel>[
+            ...role.permissions,
+            ...activeExtraPermissions,
+          ];
+
+          role = role.copyWith(permissions: mergedPermissions);
+        }
+
+        if (role != null) {
+          user = user.copyWith(role: role);
+        }
+      } catch (_) {
+        // Keep already merged user/branch data when role/permission collections
+        // are not readable for the current user due to Firestore rules.
       }
 
       //Now user model is complete with role and permissions.
@@ -201,6 +245,7 @@ class UserService {
   /// Add new staff member
   Future<String> addStaffMember({
     required String email,
+    required String password,
     required String roleId,
     required String roleName,
     required Map<String, String> extraPermissions,
@@ -216,21 +261,28 @@ class UserService {
         throw StaffException('Invalid email address');
       }
 
-      // Check if user already exists with this email
-      final existingUser = await _checkUserExistsByEmail(email);
-      if (existingUser != null) {
-        throw StaffException('User with this email already exists');
+      if (password.length < 6) {
+        throw StaffException('Password must be at least 6 characters');
       }
 
-      // Create user and set branch-specific info
-      final userId = await _userRepository.setBranchSpecificUsersInfo(
-        // put new staff member in branch specific collection on provided business and branch
+      // Check if staff already exists with this email in this branch
+      final existsInBranch = await _checkBranchStaffExistsByEmail(
+        email: email,
         businessId: businessId,
         branchId: branchId,
-        uid: null, // New user
+      );
+      if (existsInBranch) {
+        throw StaffException('Staff with this email already exists');
+      }
+
+      final authUid = await _userRepository.createStaffAuthUser(
+        businessId: businessId,
+        branchId: branchId,
+        email: email.trim().toLowerCase(),
+        password: password,
         roleId: roleId,
+        roleName: roleName,
         extraPermissions: extraPermissions,
-        email: email,
         name: name,
         phoneNumber: phoneNumber,
       );
@@ -241,7 +293,7 @@ class UserService {
       //   roleName: roleName,
       // );
 
-      return userId;
+      return authUid;
     } catch (e) {
       if (e is StaffException) rethrow;
       throw StaffException('Failed to add staff member: $e');
@@ -259,8 +311,7 @@ class UserService {
     String? phoneNumber,
   }) async {
     try {
-      // Update branch-specific and root user info
-      await _userRepository.setBranchSpecificUsersInfo(
+      await _userRepository.updateStaffAuthUser(
         businessId: businessId,
         branchId: branchId,
         uid: uid,
@@ -329,14 +380,68 @@ class UserService {
       // Fetch complete user details using UserService
       final List<UserModel> staffMembers = [];
 
+      DateTime parseDate(dynamic value) {
+        if (value is Timestamp) return value.toDate();
+        if (value is DateTime) return value;
+        if (value is String) {
+          final parsed = DateTime.tryParse(value);
+          if (parsed != null) return parsed;
+          final ms = int.tryParse(value);
+          if (ms != null) return DateTime.fromMillisecondsSinceEpoch(ms);
+        }
+        if (value is int) {
+          return DateTime.fromMillisecondsSinceEpoch(value);
+        }
+        return DateTime.now();
+      }
+
       for (final branchUser in branchUsers) {
         final uid = branchUser['uid'] as String;
 
-        // Use existing UserService.getUser which merges everything
-        final user = await getUser(uid);
+        // Try to get full user details, but fall back to branch data if it fails
+        UserModel? user;
+        try {
+          user = await getUser(uid);
+        } catch (e) {
+          // If root profile fetch fails, we'll use branch data as fallback
+          // This can happen due to Firestore permission-denied errors
+        }
 
         if (user != null) {
           staffMembers.add(user);
+        } else {
+          final roleId = (branchUser['roleId'] ?? '').toString();
+          final roleName = (branchUser['roleName'] ?? roleId).toString();
+          final extraPermissionsRaw = branchUser['extraPermissions'];
+          final extraPermissions = extraPermissionsRaw is Map
+              ? extraPermissionsRaw.map(
+                  (key, value) => MapEntry(key.toString(), value.toString()),
+                )
+              : <String, String>{};
+
+          staffMembers.add(
+            UserModel(
+              uid: uid,
+              name: (branchUser['name'] ?? branchUser['email'] ?? 'Staff')
+                  .toString(),
+              email: (branchUser['email'] ?? '').toString(),
+              phoneNumber: branchUser['phoneNumber']?.toString(),
+              isStaffMember: true,
+              role: RoleModel(
+                id: roleId,
+                name: roleName,
+                permissions: const [],
+                businessId: businessId,
+                createdAt: parseDate(branchUser['createdAt']),
+                updatedAt: parseDate(branchUser['updatedAt']),
+              ),
+              createdAt: parseDate(branchUser['createdAt']),
+              updatedAt: parseDate(branchUser['updatedAt']),
+              extraPermissions: extraPermissions,
+              primarybusinessId: businessId,
+              primaryBranchId: branchId,
+            ),
+          );
         }
       }
 
@@ -364,11 +469,10 @@ class UserService {
     required String branchId,
   }) async {
     try {
-      await _userRepository.deleteBranchSpecificUser(
+      await _userRepository.deleteStaffAuthUser(
         businessId: businessId,
         branchId: branchId,
         uid: uid,
-        deleteRootUser: deleteCompletely,
       );
     } catch (e) {
       throw StaffException('Failed to delete staff member: $e');
@@ -404,6 +508,30 @@ class UserService {
     } catch (e) {
       print('Error checking user exists: $e');
       return null;
+    }
+  }
+
+  Future<bool> _checkBranchStaffExistsByEmail({
+    required String email,
+    required String businessId,
+    required String branchId,
+  }) async {
+    try {
+      final target = email.trim().toLowerCase();
+      final branchUsers = await _userRepository.getBranchSpecificAllUsersInfo(
+        businessId: businessId,
+        branchId: branchId,
+      );
+
+      return branchUsers.any((u) {
+        final existingEmail = (u['email'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        return existingEmail.isNotEmpty && existingEmail == target;
+      });
+    } catch (_) {
+      return false;
     }
   }
 

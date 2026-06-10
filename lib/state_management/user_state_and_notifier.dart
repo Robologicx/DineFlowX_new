@@ -46,6 +46,17 @@ class UserNotifier extends StateNotifier<UserState> {
 
   UserNotifier(this._service) : super(const UserState());
 
+  Set<String> _normalizedPermissionKeys(Map<String, String> permissions) {
+    return permissions.keys.map((k) => k.trim().toLowerCase()).toSet();
+  }
+
+  Set<String> _normalizedRolePermissionKeys(UserModel user) {
+    return user.role.permissions
+        .map((p) => p.id.trim().toLowerCase())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
   bool _isSameUserSnapshot(UserModel? a, UserModel? b) {
     if (identical(a, b)) return true;
     if (a == null || b == null) return a == b;
@@ -58,7 +69,19 @@ class UserNotifier extends StateNotifier<UserState> {
         a.primarybusinessId == b.primarybusinessId &&
         a.primaryBranchId == b.primaryBranchId &&
         a.role.id == b.role.id &&
-        a.role.name == b.role.name;
+        a.role.name == b.role.name &&
+        _normalizedPermissionKeys(
+          a.extraPermissions,
+        ).difference(_normalizedPermissionKeys(b.extraPermissions)).isEmpty &&
+        _normalizedPermissionKeys(
+          b.extraPermissions,
+        ).difference(_normalizedPermissionKeys(a.extraPermissions)).isEmpty &&
+        _normalizedRolePermissionKeys(
+          a,
+        ).difference(_normalizedRolePermissionKeys(b)).isEmpty &&
+        _normalizedRolePermissionKeys(
+          b,
+        ).difference(_normalizedRolePermissionKeys(a)).isEmpty;
   }
 
   void setUser(UserModel user) {
@@ -109,34 +132,49 @@ class UserNotifier extends StateNotifier<UserState> {
       return false;
     }
 
+    final normalizedPermission = permission.trim().toLowerCase();
+    if (normalizedPermission.isEmpty) {
+      return false;
+    }
+
     if (businessId != null && selectedUser.primarybusinessId != businessId) {
       return false;
     }
 
     final roleName = selectedUser.role.name.trim().toLowerCase();
-    final hasTenantContext =
-        selectedUser.primarybusinessId.trim().isNotEmpty &&
-        selectedUser.primaryBranchId.trim().isNotEmpty;
-
-    // Legacy compatibility: some existing tenant users may not have role metadata
-    // hydrated yet after introducing the super-admin layer. Keep business flow usable.
-    if (roleName.isEmpty && (selectedUser.isStaffMember || hasTenantContext)) {
-      return true;
+    // Never grant implicit access when role metadata is missing.
+    // This prevents waiter/staff accounts from receiving full access.
+    if (roleName.isEmpty) {
+      return false;
     }
 
     if (roleName == 'admin' || roleName == 'owner') {
       return true;
     }
 
-    if (selectedUser.extraPermissions.keys.contains(permission)) {
+    final extraPermissionIds = selectedUser.extraPermissions.keys
+        .map((p) => p.trim().toLowerCase())
+        .toSet();
+
+    if (extraPermissionIds.contains(normalizedPermission)) {
       return true;
     }
 
     final rolePermissionIds = selectedUser.role.permissions
-        .map((p) => p.id)
+        .map((p) => p.id.trim().toLowerCase())
         .toSet();
 
-    return rolePermissionIds.contains(permission);
+    if (rolePermissionIds.contains(normalizedPermission)) {
+      return true;
+    }
+
+    // Fallback compatibility for records that may only hold permission names.
+    final rolePermissionNames = selectedUser.role.permissions
+        .map((p) => p.name.trim().toLowerCase())
+        .where((name) => name.isNotEmpty)
+        .toSet();
+
+    return rolePermissionNames.contains(normalizedPermission);
   }
 
   Future<void> updateUser(UserModel user) async {
@@ -223,6 +261,7 @@ class UserNotifier extends StateNotifier<UserState> {
   /// Add new staff member
   Future<bool> addStaffMember({
     required String email,
+    required String password,
     required String roleId,
     required String roleName,
     required Map<String, String> extraPermissions,
@@ -236,6 +275,7 @@ class UserNotifier extends StateNotifier<UserState> {
     try {
       final userId = await _service.addStaffMember(
         email: email,
+        password: password,
         roleId: roleId,
         roleName: roleName,
         extraPermissions: extraPermissions,
@@ -280,6 +320,12 @@ class UserNotifier extends StateNotifier<UserState> {
 
       // Refresh staff list
       await loadAllStaffMembers(businessId: businessId, branchId: branchId);
+
+      // If current logged-in user was updated, refresh immediately so
+      // permissions/role changes apply in-app without waiting for next login.
+      if (state.selectedUser?.uid == uid) {
+        await loadUser(uid);
+      }
 
       return true;
     } catch (e) {

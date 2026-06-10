@@ -10,6 +10,7 @@ import 'package:hotel_management_system/presentation/admin_screens/orders_manage
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/active_order_widget.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/orders_management_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/sales_dashboard/sales_dashboard_screen.dart';
+import 'package:hotel_management_system/permissions.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
 import 'package:hotel_management_system/state_management/current_tenant_business_provider.dart';
 import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
@@ -56,6 +57,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final branchId = tenantContext.branchId;
     final businessId = tenantContext.businessId;
     final userState = ref.watch(userProvider);
+    final userNotifier = ref.read(userProvider.notifier);
     final businessAsync = ref.watch(currentTenantBusinessProvider);
     final businessName = businessAsync.maybeWhen(
       data: (business) => business?.title,
@@ -128,19 +130,32 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             _buildSyncStatusCompact(),
             const SizedBox(height: 16),
 
-            ActiveOrdersWidget(
-              businessId: businessId,
-              branchId: branchId,
-              maxOrders: 5,
-              onViewAll: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const OrderManagementScreen(),
-                  ),
-                );
-              },
-            ),
+            if (userNotifier.hasPermissionOfCurrentUser(
+                  Permissions.viewActiveOrders,
+                ) ||
+                userNotifier.hasPermissionOfCurrentUser(
+                  Permissions.viewOrderHistory,
+                ))
+              ActiveOrdersWidget(
+                businessId: businessId,
+                branchId: branchId,
+                maxOrders: 5,
+                onViewAll: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const OrderManagementScreen(),
+                    ),
+                  );
+                },
+              )
+            else
+              const Card(
+                child: ListTile(
+                  leading: Icon(Icons.lock_outline),
+                  title: Text('No permission to view order data'),
+                ),
+              ),
 
             // ---- ADMIN / OWNER ----
             if (user.role.name.toLowerCase() == 'owner' ||
@@ -204,6 +219,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ? (businessName ?? user.name).trim()[0].toUpperCase()
         : 'B';
 
+    final resolvedBusinessName = (businessName ?? '').trim().isNotEmpty
+        ? businessName!.trim()
+        : businessId;
+
     return Card(
       child: ListTile(
         leading: CircleAvatar(
@@ -219,7 +238,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ),
         title: Text('Welcome, ${user.name}'),
         subtitle: Text(
-          'Role: ${user.role.name}\nBusiness: $businessId | Branch: $branchId',
+          'Role: ${user.role.name}\nBusiness: $resolvedBusinessName | Branch: $branchId',
           style: const TextStyle(fontSize: 12),
         ),
       ),

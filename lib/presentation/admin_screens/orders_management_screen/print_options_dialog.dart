@@ -1,16 +1,21 @@
 // print_options_dialog.dart
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/order_recipt_pdf_generator.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:hotel_management_system/data/models/order_model.dart';
+import 'package:hotel_management_system/state_management/app_providers.dart';
 
-class PrintOptionsDialog extends StatelessWidget {
+class PrintOptionsDialog extends ConsumerWidget {
   final OrderModel order;
   final String? roomName;
 
   const PrintOptionsDialog({super.key, required this.order, this.roomName});
 
-  Future<void> _handlePrint(BuildContext context) async {
+  Future<void> _handlePrint(
+    BuildContext context, {
+    required String? businessId,
+  }) async {
     try {
       // Show loading
       showDialog(
@@ -22,6 +27,7 @@ class PrintOptionsDialog extends StatelessWidget {
       // Generate PDF
       final pdf = await OrderPdfGenerator.generateOrderPdf(
         order: order,
+        businessId: businessId,
         roomName: roomName,
         includeTax: false, // Change to true when you want tax
       );
@@ -44,7 +50,10 @@ class PrintOptionsDialog extends StatelessWidget {
     }
   }
 
-  Future<void> _handleSave(BuildContext context) async {
+  Future<void> _handleSave(
+    BuildContext context, {
+    required String? businessId,
+  }) async {
     try {
       // Show loading
       showDialog(
@@ -56,6 +65,7 @@ class PrintOptionsDialog extends StatelessWidget {
       // Generate PDF
       final pdf = await OrderPdfGenerator.generateOrderPdf(
         order: order,
+        businessId: businessId,
         roomName: roomName,
         includeTax: false,
       );
@@ -100,7 +110,10 @@ class PrintOptionsDialog extends StatelessWidget {
     }
   }
 
-  Future<void> _handleShare(BuildContext context) async {
+  Future<void> _handleShare(
+    BuildContext context, {
+    required String? businessId,
+  }) async {
     try {
       // Show loading
       showDialog(
@@ -112,6 +125,7 @@ class PrintOptionsDialog extends StatelessWidget {
       // Generate PDF
       final pdf = await OrderPdfGenerator.generateOrderPdf(
         order: order,
+        businessId: businessId,
         roomName: roomName,
         includeTax: false,
       );
@@ -136,7 +150,9 @@ class PrintOptionsDialog extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final businessId = ref.watch(userProvider).selectedUser?.primarybusinessId;
+
     return Dialog(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 400),
@@ -168,21 +184,21 @@ class PrintOptionsDialog extends StatelessWidget {
                 leading: const Icon(Icons.print),
                 title: const Text('Print Receipt'),
                 subtitle: const Text('Send directly to printer'),
-                onTap: () => _handlePrint(context),
+                onTap: () => _handlePrint(context, businessId: businessId),
               ),
               const Divider(),
               ListTile(
                 leading: const Icon(Icons.save),
                 title: const Text('Save to Device'),
                 subtitle: const Text('Save PDF to documents'),
-                onTap: () => _handleSave(context),
+                onTap: () => _handleSave(context, businessId: businessId),
               ),
               const Divider(),
               ListTile(
                 leading: const Icon(Icons.share),
                 title: const Text('Share PDF'),
                 subtitle: const Text('Share via other apps'),
-                onTap: () => _handleShare(context),
+                onTap: () => _handleShare(context, businessId: businessId),
               ),
               const SizedBox(height: 16),
               TextButton(
