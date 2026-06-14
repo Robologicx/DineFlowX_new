@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hotel_management_system/core/sync/connectivity_service.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
-import 'package:hotel_management_system/data/models/close_day_report.dart';
 import 'package:hotel_management_system/data/models/room_model.dart';
 import 'package:hotel_management_system/data/models/sales_model_and_management.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
@@ -691,61 +691,18 @@ final currentDayStartAtProvider =
       return service.currentDayStartAtStream();
     });
 
-final closeCurrentDayProvider =
-    FutureProvider.family<
-      void,
-      ({
-        String businessId,
-        String branchId,
-        TableNotifier tableNotifier,
-        String? closedBy,
-      })
-    >((ref, params) async {
-      final service = ref.read(
-        _orderServiceProvider((
-          businessId: params.businessId,
-          branchId: params.branchId,
-          tableNotifier: params.tableNotifier,
-        )),
-      );
+//----------------------------------------------- CONNECTIVITY STATUS PROVIDER -----------------------------------------------//
+final connectivityStatusProvider = StreamProvider<bool>((ref) async* {
+  // Watch connectivity status changes
+  final service = ConnectivityService.instance;
+  await service.start();
 
-      await service.closeCurrentDay(closedBy: params.closedBy);
-      ref.invalidate(todayOrdersStreamProvider);
-      ref.invalidate(
-        currentDayStartAtProvider((
-          businessId: params.businessId,
-          branchId: params.branchId,
-          tableNotifier: params.tableNotifier,
-        )),
-      );
-    });
+  // Emit current status
+  yield service.isOnlineNotifier.value;
 
-final closeCurrentDayReportProvider =
-    FutureProvider.family<
-      CloseDayReport,
-      ({
-        String businessId,
-        String branchId,
-        TableNotifier tableNotifier,
-        String? closedBy,
-      })
-    >((ref, params) async {
-      final service = ref.read(
-        _orderServiceProvider((
-          businessId: params.businessId,
-          branchId: params.branchId,
-          tableNotifier: params.tableNotifier,
-        )),
-      );
-
-      final report = await service.closeCurrentDay(closedBy: params.closedBy);
-      ref.invalidate(todayOrdersStreamProvider);
-      ref.invalidate(
-        currentDayStartAtProvider((
-          businessId: params.businessId,
-          branchId: params.branchId,
-          tableNotifier: params.tableNotifier,
-        )),
-      );
-      return report;
-    });
+  // Listen to changes
+  while (true) {
+    await Future.delayed(const Duration(milliseconds: 200));
+    yield service.isOnlineNotifier.value;
+  }
+});

@@ -17,19 +17,28 @@ class SalesService {
   }) : _repository = salesRepository,
        _expenseRepository = expenseRepository;
 
-  Future<(DateTime, DateTime)> getCurrentBusinessDayRange() async {
-    final now = DateTime.now();
-    final marker = await _repository.getCurrentBusinessDayStartAt();
-    if (marker != null) {
-      return (marker.toLocal(), now);
-    }
+  DateTime _fixedBusinessDayStartAt([DateTime? now]) {
+    final localNow = (now ?? DateTime.now()).toLocal();
+    final fourAmToday = DateTime(
+      localNow.year,
+      localNow.month,
+      localNow.day,
+      4,
+      0,
+      0,
+    );
 
-    // Backward-compatible fallback if marker is not initialized yet.
-    final fourAmToday = DateTime(now.year, now.month, now.day, 4);
-    if (now.isBefore(fourAmToday)) {
-      return (fourAmToday.subtract(const Duration(days: 1)), now);
-    }
-    return (fourAmToday, now);
+    return localNow.isBefore(fourAmToday)
+        ? fourAmToday.subtract(const Duration(days: 1))
+        : fourAmToday;
+  }
+
+  Future<(DateTime, DateTime)> getCurrentBusinessDayRange() async {
+    final dayStart = _fixedBusinessDayStartAt();
+    final dayEnd = dayStart
+        .add(const Duration(days: 1))
+        .subtract(const Duration(milliseconds: 1));
+    return (dayStart, dayEnd);
   }
 
   /// Generate complete sales report for given date range
@@ -105,18 +114,13 @@ class SalesService {
   }
 
   Future<SalesReport> generateCurrentBusinessDayReport() async {
-    final marker = await _repository.getCurrentBusinessDayStartAt();
-    if (marker == null) {
-      final range = await getCurrentBusinessDayRange();
-      return generateSalesReport(
-        startDate: range.$1,
-        endDate: range.$2,
-        period: ReportPeriod.today,
-      );
-    }
+    final range = await getCurrentBusinessDayRange();
+    final startAt = range.$1;
+    final endAt = range.$2;
 
-    final completedOrders = await _repository.getOrdersForBusinessDayStart(
-      businessDayStartAt: marker,
+    final completedOrders = await _repository.getOrdersByDateRange(
+      startDate: startAt,
+      endDate: endAt,
       statuses: [
         OrderStatus.completed,
         OrderStatus.pending,
@@ -124,13 +128,15 @@ class SalesService {
       ],
     );
 
-    final cancelledOrders = await _repository.getOrdersForBusinessDayStart(
-      businessDayStartAt: marker,
+    final cancelledOrders = await _repository.getOrdersByDateRange(
+      startDate: startAt,
+      endDate: endAt,
       statuses: [OrderStatus.cancelled, OrderStatus.refunded],
     );
 
-    final allCurrentDayOrders = await _repository.getOrdersForBusinessDayStart(
-      businessDayStartAt: marker,
+    final allCurrentDayOrders = await _repository.getOrdersByDateRange(
+      startDate: startAt,
+      endDate: endAt,
     );
 
     final totalRevenue = _calculateTotalRevenue(completedOrders);
@@ -147,8 +153,9 @@ class SalesService {
             .length,
     };
 
-    final expenses = await _expenseRepository.getCurrentBusinessDayExpenses(
-      marker,
+    final expenses = await _expenseRepository.getExpensesByDateRange(
+      startDate: startAt,
+      endDate: endAt,
     );
     final totalExpenses = expenses.fold<double>(
       0.0,
@@ -157,7 +164,7 @@ class SalesService {
     final profitOrLoss = totalRevenue - totalExpenses;
 
     final revenueByDay = <String, double>{
-      '${marker.day}/${marker.month}': totalRevenue,
+      '${startAt.day}/${startAt.month}': totalRevenue,
     };
 
     return SalesReport(
@@ -167,8 +174,8 @@ class SalesService {
       ordersByType: ordersByType,
       ordersByStatus: ordersByStatus,
       topProducts: topProducts,
-      startDate: marker.toLocal(),
-      endDate: DateTime.now(),
+      startDate: startAt,
+      endDate: endAt,
       period: ReportPeriod.today,
       cancelledOrders: cancelledOrders.length,
       refundedAmount: refundedAmount,

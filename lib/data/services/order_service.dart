@@ -1,5 +1,4 @@
 import 'package:hotel_management_system/data/models/table_model.dart';
-import 'package:hotel_management_system/data/models/close_day_report.dart';
 
 import '../repositories/order_repository.dart';
 import '../models/order_model.dart';
@@ -46,10 +45,6 @@ class OrderService {
 
   Stream<DateTime> currentDayStartAtStream() {
     return _orderRepository.currentDayStartAtStream();
-  }
-
-  Future<CloseDayReport> closeCurrentDay({String? closedBy}) {
-    return _orderRepository.closeCurrentDay(closedBy: closedBy);
   }
 
   /// Get order by ID

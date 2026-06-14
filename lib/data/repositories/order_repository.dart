@@ -62,6 +62,24 @@ class OrderRepository {
     return '$y-$m-$d-$h$min';
   }
 
+  DateTime _fixedBusinessDayStartAtUtc([DateTime? now]) {
+    final localNow = (now ?? DateTime.now()).toLocal();
+    final fourAmToday = DateTime(
+      localNow.year,
+      localNow.month,
+      localNow.day,
+      4,
+      0,
+      0,
+    );
+
+    final startLocal = localNow.isBefore(fourAmToday)
+        ? fourAmToday.subtract(const Duration(days: 1))
+        : fourAmToday;
+
+    return startLocal.toUtc();
+  }
+
   Future<DateTime?> _getCurrentDayStartAtFromStore() async {
     final localDoc = await OfflineLocalReadService.instance.getBranchDocument(
       businessId: _businessId,
@@ -81,24 +99,19 @@ class OrderRepository {
   }
 
   Future<DateTime> ensureCurrentDayStartAt() async {
-    final existing = await _getCurrentDayStartAtFromStore();
-    if (existing != null) {
-      return existing;
-    }
-
-    final now = DateTime.now();
-    final nowUtc = now.toUtc();
+    final dayStartAt = _fixedBusinessDayStartAtUtc();
+    final nowUtc = DateTime.now().toUtc();
     await OfflineFirestoreWriteQueueService.instance.setOrQueue(
       documentPath:
           'businesses/$_businessId/branches/$_branchId/settings/operations',
       data: {
-        'currentDayStartAt': nowUtc,
-        'currentBusinessDayId': _businessDayIdFromStart(nowUtc),
+        'currentDayStartAt': dayStartAt,
+        'currentBusinessDayId': _businessDayIdFromStart(dayStartAt),
         'updatedAt': nowUtc,
       },
       merge: true,
     );
-    return nowUtc;
+    return dayStartAt;
   }
 
   Future<List<OrderModel>> _getOrdersInRange({
@@ -212,35 +225,48 @@ class OrderRepository {
 
   Stream<DateTime> currentDayStartAtStream() {
     return Stream<DateTime>.multi((controller) {
-      StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? sub;
+      Timer? timer;
       bool isCancelled = false;
+      DateTime? lastEmitted;
 
-      Future<void> emitFallback() async {
+      Future<void> emitCurrentBusinessDayStart() async {
         if (isCancelled) return;
         final value = await ensureCurrentDayStartAt();
         if (isCancelled) return;
+
+        if (lastEmitted != null &&
+            lastEmitted!.millisecondsSinceEpoch ==
+                value.millisecondsSinceEpoch) {
+          return;
+        }
+
+        lastEmitted = value;
         controller.add(value);
       }
 
-      sub = _operationsSettingsRef.snapshots().listen(
-        (snapshot) async {
-          final startAt = _toDateTime(snapshot.data()?['currentDayStartAt']);
-          if (startAt != null) {
-            controller.add(startAt);
-            return;
-          }
-          await emitFallback();
-        },
-        onError: (_) async {
-          await emitFallback();
-        },
-      );
+      void scheduleNextBoundaryCheck() {
+        if (isCancelled) return;
+        timer?.cancel();
 
-      unawaited(emitFallback());
+        final now = DateTime.now().toLocal();
+        final fourAmToday = DateTime(now.year, now.month, now.day, 4, 0, 0);
+        final nextBoundary = now.isBefore(fourAmToday)
+            ? fourAmToday
+            : fourAmToday.add(const Duration(days: 1));
+
+        final delay = nextBoundary.difference(now) + const Duration(seconds: 1);
+        timer = Timer(delay, () {
+          unawaited(emitCurrentBusinessDayStart());
+          scheduleNextBoundaryCheck();
+        });
+      }
+
+      unawaited(emitCurrentBusinessDayStart());
+      scheduleNextBoundaryCheck();
 
       controller.onCancel = () {
         isCancelled = true;
-        sub?.cancel();
+        timer?.cancel();
       };
     }).distinct((a, b) => a.millisecondsSinceEpoch == b.millisecondsSinceEpoch);
   }

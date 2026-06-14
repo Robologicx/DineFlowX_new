@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/data/models/product_model.dart';
 import 'package:hotel_management_system/data/models/category_model.dart';
+import 'package:hotel_management_system/data/models/menu_model.dart';
 import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/permissions.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
@@ -71,6 +72,12 @@ class _ProductManagementScreenState
               _categories = categories;
             });
           });
+
+      ref
+          .read(
+            menuProvider((branchId: branchId, businessId: businessId)).notifier,
+          )
+          .loadAllMenus();
 
       // Load products
       final productNotifier = ref.read(
@@ -176,6 +183,12 @@ class _ProductManagementScreenState
         businessId: effectiveBusinessId,
       )),
     );
+    final menuState = ref.watch(
+      menuProvider((
+        branchId: effectiveBranchId,
+        businessId: effectiveBusinessId,
+      )),
+    );
     final filteredForExport = _filterProducts(productsAsync.products);
 
     final theme = Theme.of(context);
@@ -199,6 +212,7 @@ class _ProductManagementScreenState
                 await _exportMenuToExcel(
                   filteredForExport,
                   categoryState.categories,
+                  menuState.menus,
                 );
               } else if (value == 'import') {
                 if (!widget.canCreateProduct) {
@@ -212,7 +226,10 @@ class _ProductManagementScreenState
                   );
                   return;
                 }
-                await _importMenuFromExcel(categoryState.categories);
+                await _importMenuFromExcel(
+                  categoryState.categories,
+                  menuState.menus,
+                );
               }
             },
             itemBuilder: (context) => [
@@ -220,7 +237,7 @@ class _ProductManagementScreenState
                 value: 'export',
                 child: ListTile(
                   leading: Icon(Icons.download_rounded),
-                  title: Text('Export Menu (Excel CSV)'),
+                  title: Text('Export Template (Excel CSV)'),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
@@ -229,7 +246,7 @@ class _ProductManagementScreenState
                   value: 'import',
                   child: ListTile(
                     leading: Icon(Icons.upload_file_rounded),
-                    title: Text('Import Menu (Excel CSV)'),
+                    title: Text('Import Template (Excel CSV)'),
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
@@ -1246,22 +1263,32 @@ class _ProductManagementScreenState
   Future<void> _exportMenuToExcel(
     List<ProductModel> products,
     List<CategoryModel> categories,
+    List<MenuModel> menus,
   ) async {
     try {
-      final categoryNamesById = {for (final c in categories) c.id: c.name};
+      final categoryById = {for (final c in categories) c.id: c};
+      final menuById = {for (final m in menus) m.id: m};
 
       final csvRows = <String>[];
       csvRows.add(
-        'Name,Description,Price,Category,CategoryId,Available,ImageUrl',
+        'MenuName,MenuDescription,CategoryName,CategoryId,ProductName,ProductDescription,Price,Available,ImageUrl',
       );
 
+      if (products.isEmpty) {
+        csvRows.add('Default Menu,Main menu,Beverages,,Tea,Hot tea,250,true,');
+      }
+
       for (final product in products) {
+        final category = categoryById[product.categoryId];
+        final menu = category == null ? null : menuById[category.menuId];
         final row = [
+          _escapeCsv(menu?.name ?? ''),
+          _escapeCsv(menu?.description ?? ''),
+          _escapeCsv(category?.name ?? ''),
+          _escapeCsv(product.categoryId),
           _escapeCsv(product.name),
           _escapeCsv(product.description),
-          product.price.toString(),
-          _escapeCsv(categoryNamesById[product.categoryId] ?? ''),
-          _escapeCsv(product.categoryId),
+          product.price.toStringAsFixed(2),
           product.isAvailable.toString(),
           _escapeCsv(product.imageUrl ?? ''),
         ].join(',');
@@ -1303,7 +1330,11 @@ class _ProductManagementScreenState
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Menu exported: ${products.length} products.')),
+        SnackBar(
+          content: Text(
+            'Template exported: ${products.length} products with menu/category mapping.',
+          ),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -1313,7 +1344,10 @@ class _ProductManagementScreenState
     }
   }
 
-  Future<void> _importMenuFromExcel(List<CategoryModel> categories) async {
+  Future<void> _importMenuFromExcel(
+    List<CategoryModel> categories,
+    List<MenuModel> menus,
+  ) async {
     try {
       final bytes = await _pickCsvBytes();
       if (bytes == null || bytes.isEmpty) {
@@ -1351,6 +1385,8 @@ class _ProductManagementScreenState
         return null;
       }
 
+      final menuCol = indexOf(['menu', 'menuname']);
+      final menuDescCol = indexOf(['menudescription', 'menudesc']);
       final nameCol = indexOf(['name', 'productname']);
       final priceCol = indexOf(['price', 'rate', 'amount']);
       final categoryCol = indexOf(['category', 'categoryname']);
@@ -1359,11 +1395,9 @@ class _ProductManagementScreenState
       final availableCol = indexOf(['available', 'isavailable', 'status']);
       final imageCol = indexOf(['imageurl', 'image', 'imagepath']);
 
-      if (nameCol == null ||
-          priceCol == null ||
-          (categoryCol == null && categoryIdCol == null)) {
+      if (menuCol == null && categoryCol == null && nameCol == null) {
         throw Exception(
-          'Required columns: Name, Price, and Category or CategoryId.',
+          'Required columns missing. Use template with MenuName, CategoryName, and ProductName.',
         );
       }
 
@@ -1371,10 +1405,133 @@ class _ProductManagementScreenState
       final effectiveBusinessId = user?.primarybusinessId ?? businessId;
       final effectiveBranchId = user?.primaryBranchId ?? branchId;
 
-      final categoryIdByName = {
-        for (final c in categories) c.name.trim().toLowerCase(): c.id,
+      final menuParams = (
+        businessId: effectiveBusinessId,
+        branchId: effectiveBranchId,
+      );
+      final menuNotifier = ref.read(menuProvider(menuParams).notifier);
+      final categoryNotifier = ref.read(categoryProvider(menuParams).notifier);
+
+      Future<List<MenuModel>> loadMenus() async {
+        await menuNotifier.loadAllMenus();
+        return ref.read(menuProvider(menuParams)).menus;
+      }
+
+      Future<List<CategoryModel>> loadCategories() async {
+        return await categoryNotifier.loadAllCategories();
+      }
+
+      var currentMenus = menus;
+      if (currentMenus.isEmpty) {
+        currentMenus = await loadMenus();
+      }
+
+      var currentCategories = categories;
+      if (currentCategories.isEmpty) {
+        currentCategories = await loadCategories();
+      }
+
+      final menuIdByName = <String, String>{
+        for (final m in currentMenus) m.name.trim().toLowerCase(): m.id,
       };
-      final categoryIds = categories.map((c) => c.id).toSet();
+      final menuDescByName = <String, String?>{
+        for (final m in currentMenus)
+          m.name.trim().toLowerCase(): m.description,
+      };
+
+      final categoryIdByMenuAndName = <String, String>{
+        for (final c in currentCategories)
+          '${c.menuId}::${c.name.trim().toLowerCase()}': c.id,
+      };
+      final categoryIds = currentCategories.map((c) => c.id).toSet();
+      final categoryById = {for (final c in currentCategories) c.id: c};
+
+      Future<String?> ensureMenuId(
+        String menuName,
+        String menuDescription,
+      ) async {
+        final normalized = menuName.trim().toLowerCase();
+        if (normalized.isEmpty) return null;
+
+        final existing = menuIdByName[normalized];
+        if (existing != null && existing.isNotEmpty) {
+          return existing;
+        }
+
+        final selectedUser = ref.read(userProvider).selectedUser;
+        try {
+          await menuNotifier.createMenu(
+            name: menuName.trim(),
+            description: menuDescription.trim().isEmpty
+                ? null
+                : menuDescription.trim(),
+            createdBy: selectedUser?.uid ?? 'excel-import',
+          );
+        } catch (_) {
+          // If already exists or temporary sync error, try reload + resolve by name.
+        }
+
+        currentMenus = await loadMenus();
+        for (final menu in currentMenus) {
+          final key = menu.name.trim().toLowerCase();
+          menuIdByName[key] = menu.id;
+          menuDescByName[key] = menu.description;
+        }
+
+        return menuIdByName[normalized];
+      }
+
+      Future<String?> ensureCategoryId(
+        String menuId,
+        String categoryName,
+      ) async {
+        final normalized = categoryName.trim().toLowerCase();
+        if (normalized.isEmpty) return null;
+
+        final key = '$menuId::$normalized';
+        final existing = categoryIdByMenuAndName[key];
+        if (existing != null && existing.isNotEmpty) {
+          return existing;
+        }
+
+        final newCategory = CategoryModel(
+          id: const Uuid().v4(),
+          name: categoryName.trim(),
+          menuId: menuId,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        try {
+          await categoryNotifier.addCategory(
+            newCategory,
+            null,
+            '',
+            effectiveBusinessId,
+            effectiveBranchId,
+          );
+        } catch (_) {
+          // If duplicate or sync race, reload and resolve below.
+        }
+
+        currentCategories = await loadCategories();
+        categoryIds
+          ..clear()
+          ..addAll(currentCategories.map((c) => c.id));
+        categoryById
+          ..clear()
+          ..addEntries(currentCategories.map((c) => MapEntry(c.id, c)));
+        categoryIdByMenuAndName
+          ..clear()
+          ..addEntries(
+            currentCategories.map(
+              (c) =>
+                  MapEntry('${c.menuId}::${c.name.trim().toLowerCase()}', c.id),
+            ),
+          );
+
+        return categoryIdByMenuAndName[key];
+      }
 
       String cellAt(List<String> row, int? col) {
         if (col == null || col < 0 || col >= row.length) return '';
@@ -1382,13 +1539,130 @@ class _ProductManagementScreenState
       }
 
       var successCount = 0;
+      var menuCreatedCount = 0;
+      var categoryCreatedCount = 0;
       var failCount = 0;
       final failures = <String>[];
 
       for (var rowIndex = 1; rowIndex < rows.length; rowIndex++) {
         final row = rows[rowIndex];
+        final menuName = cellAt(row, menuCol);
+        final menuDescription = cellAt(row, menuDescCol);
         final name = cellAt(row, nameCol);
-        if (name.isEmpty) continue;
+        final categoryNameCell = categoryCol == null
+            ? ''
+            : cellAt(row, categoryCol);
+
+        if (menuName.isEmpty && categoryNameCell.isEmpty && name.isEmpty) {
+          continue;
+        }
+
+        var menuId = '';
+        final normalizedMenuName = menuName.trim().toLowerCase();
+        if (normalizedMenuName.isNotEmpty) {
+          final beforeMenuId = menuIdByName[normalizedMenuName];
+          final resolvedMenuId = await ensureMenuId(menuName, menuDescription);
+          if (resolvedMenuId == null || resolvedMenuId.isEmpty) {
+            failCount++;
+            if (failures.length < 5) {
+              failures.add('Row ${rowIndex + 1}: menu not found/created.');
+            }
+            continue;
+          }
+          menuId = resolvedMenuId;
+          if (beforeMenuId == null) {
+            menuCreatedCount++;
+          }
+        }
+
+        var resolvedCategoryId = '';
+        if (categoryIdCol != null) {
+          final rawCategoryId = cellAt(row, categoryIdCol);
+          if (categoryIds.contains(rawCategoryId)) {
+            resolvedCategoryId = rawCategoryId;
+            menuId = menuId.isNotEmpty
+                ? menuId
+                : (categoryById[rawCategoryId]?.menuId ?? '');
+          }
+        }
+
+        if (resolvedCategoryId.isEmpty && categoryCol != null) {
+          final categoryName = cellAt(row, categoryCol).trim();
+          if (categoryName.isNotEmpty) {
+            if (menuId.isEmpty) {
+              final fallbackMenuName = 'Imported Menu';
+              final fallbackMenuBefore =
+                  menuIdByName[fallbackMenuName.toLowerCase()];
+              final fallbackMenuId = await ensureMenuId(
+                fallbackMenuName,
+                'Auto-created from import template',
+              );
+              if (fallbackMenuId != null && fallbackMenuId.isNotEmpty) {
+                menuId = fallbackMenuId;
+                if (fallbackMenuBefore == null) {
+                  menuCreatedCount++;
+                }
+              }
+            }
+
+            if (menuId.isNotEmpty) {
+              final categoryKey =
+                  '$menuId::${categoryName.toLowerCase().trim()}';
+              final beforeCategoryId = categoryIdByMenuAndName[categoryKey];
+              final ensuredCategoryId = await ensureCategoryId(
+                menuId,
+                categoryName,
+              );
+              if (ensuredCategoryId != null && ensuredCategoryId.isNotEmpty) {
+                resolvedCategoryId = ensuredCategoryId;
+                if (beforeCategoryId == null) {
+                  categoryCreatedCount++;
+                }
+              }
+            }
+          }
+        }
+
+        // If category is still missing for a product row, auto-create a fallback category.
+        if (resolvedCategoryId.isEmpty && name.isNotEmpty) {
+          if (menuId.isEmpty) {
+            final fallbackMenuName = 'Imported Menu';
+            final fallbackMenuBefore =
+                menuIdByName[fallbackMenuName.toLowerCase()];
+            final fallbackMenuId = await ensureMenuId(
+              fallbackMenuName,
+              'Auto-created from import template',
+            );
+            if (fallbackMenuId != null && fallbackMenuId.isNotEmpty) {
+              menuId = fallbackMenuId;
+              if (fallbackMenuBefore == null) {
+                menuCreatedCount++;
+              }
+            }
+          }
+
+          if (menuId.isNotEmpty) {
+            const fallbackCategoryName = 'Imported Category';
+            final fallbackCategoryKey =
+                '$menuId::${fallbackCategoryName.toLowerCase()}';
+            final fallbackCategoryBefore =
+                categoryIdByMenuAndName[fallbackCategoryKey];
+            final fallbackCategoryId = await ensureCategoryId(
+              menuId,
+              fallbackCategoryName,
+            );
+            if (fallbackCategoryId != null && fallbackCategoryId.isNotEmpty) {
+              resolvedCategoryId = fallbackCategoryId;
+              if (fallbackCategoryBefore == null) {
+                categoryCreatedCount++;
+              }
+            }
+          }
+        }
+
+        if (name.isEmpty) {
+          continue;
+        }
 
         final priceRaw = cellAt(row, priceCol);
         final price = _tryParsePrice(priceRaw);
@@ -1400,23 +1674,10 @@ class _ProductManagementScreenState
           continue;
         }
 
-        var resolvedCategoryId = '';
-        if (categoryIdCol != null) {
-          final rawCategoryId = cellAt(row, categoryIdCol);
-          if (categoryIds.contains(rawCategoryId)) {
-            resolvedCategoryId = rawCategoryId;
-          }
-        }
-
-        if (resolvedCategoryId.isEmpty && categoryCol != null) {
-          final categoryName = cellAt(row, categoryCol).toLowerCase().trim();
-          resolvedCategoryId = categoryIdByName[categoryName] ?? '';
-        }
-
         if (resolvedCategoryId.isEmpty) {
           failCount++;
           if (failures.length < 5) {
-            failures.add('Row ${rowIndex + 1}: category not found.');
+            failures.add('Row ${rowIndex + 1}: category not found/created.');
           }
           continue;
         }
@@ -1463,7 +1724,7 @@ class _ProductManagementScreenState
         SnackBar(
           duration: const Duration(seconds: 6),
           content: Text(
-            'Import completed. Added: $successCount, Failed: $failCount.$details',
+            'Import completed. Menus: +$menuCreatedCount, Categories: +$categoryCreatedCount, Products: +$successCount, Failed: $failCount.$details',
           ),
         ),
       );

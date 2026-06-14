@@ -13,6 +13,7 @@ import 'package:hotel_management_system/core/utils/offline_firestore_write_queue
 import 'package:hotel_management_system/core/utils/firestore_offline_config.dart';
 import 'package:hotel_management_system/core/utils/offline_media_upload_queue_service.dart';
 import 'package:hotel_management_system/core/utils/offline_order_queue_service.dart';
+import 'package:hotel_management_system/core/alerts/order_alert_listener.dart';
 import 'package:hotel_management_system/presentation/common_widgets/offline_sync_status_banner.dart';
 import 'routes/admin_app_routes.dart';
 import 'firebase_options.dart'; // Import the generated Firebase options
@@ -193,6 +194,7 @@ class AdminApp extends ConsumerWidget {
           fit: StackFit.expand,
           children: [
             child ?? const SizedBox.shrink(),
+            const OrderAlertListener(),
             const OfflineSyncStatusBanner(),
           ],
         );

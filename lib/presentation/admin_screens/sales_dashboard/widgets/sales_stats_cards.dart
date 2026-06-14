@@ -5,6 +5,7 @@ class SalesStatsCards extends StatelessWidget {
   final double totalRevenue;
   final double totalExpenses;
   final double profitOrLoss;
+  final double cashInHand;
   final int totalOrders;
   final double averageOrderValue;
   final int activeOrders;
@@ -14,6 +15,7 @@ class SalesStatsCards extends StatelessWidget {
     required this.totalRevenue,
     required this.totalExpenses,
     required this.profitOrLoss,
+    required this.cashInHand,
     required this.totalOrders,
     required this.averageOrderValue,
     required this.activeOrders,
@@ -53,6 +55,14 @@ class SalesStatsCards extends StatelessWidget {
               title: 'Total Expenses',
               value: 'Rs ${totalExpenses.toStringAsFixed(2)}',
               color: Colors.red,
+            ),
+            _buildStatCard(
+              context,
+              icon: Icons.account_balance_wallet,
+              title: 'Cash in Hand',
+              value: 'Rs ${cashInHand.toStringAsFixed(2)}',
+              color: cashInHand >= 0 ? Colors.green.shade700 : Colors.red.shade700,
+              subtitle: cashInHand >= 0 ? 'After expenses' : 'Deficit',
             ),
             _buildStatCard(
               context,

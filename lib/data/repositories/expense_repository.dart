@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
 import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
 import 'package:hotel_management_system/data/models/expense_model.dart';
@@ -45,27 +46,22 @@ class ExpenseRepository {
     return '$y-$m-$d-$h$min';
   }
 
-  Future<DateTime?> _getCurrentBusinessDayStartAt() async {
-    final localDoc = await OfflineLocalReadService.instance.getBranchDocument(
-      businessId: businessId,
-      branchId: branchId,
-      collectionName: 'settings',
-      documentId: 'operations',
+  DateTime _fixedBusinessDayStartAtUtc([DateTime? now]) {
+    final localNow = (now ?? DateTime.now()).toLocal();
+    final fourAmToday = DateTime(
+      localNow.year,
+      localNow.month,
+      localNow.day,
+      4,
+      0,
+      0,
     );
 
-    final localStart = _toDateTime(localDoc?['currentDayStartAt']);
-    if (localStart != null) return localStart;
+    final startLocal = localNow.isBefore(fourAmToday)
+        ? fourAmToday.subtract(const Duration(days: 1))
+        : fourAmToday;
 
-    final remoteDoc = await _firestore
-        .collection('businesses')
-        .doc(businessId)
-        .collection('branches')
-        .doc(branchId)
-        .collection('settings')
-        .doc('operations')
-        .get();
-    if (!remoteDoc.exists) return null;
-    return _toDateTime(remoteDoc.data()?['currentDayStartAt']);
+    return startLocal.toUtc();
   }
 
   Future<List<ExpenseModel>> getExpensesByDateRange({
@@ -84,13 +80,32 @@ class ExpenseRepository {
   }
 
   Future<List<ExpenseModel>> getAllExpenses() async {
-    final localRows = await OfflineLocalReadService.instance
-        .getBranchCollection(
-          businessId: businessId,
-          branchId: branchId,
-          collectionName: 'expenses',
-        );
-    if (localRows.isNotEmpty) {
+    // Cloud-first strategy: prefer cloud when online, fall back to local when offline
+    try {
+      // Try to load from cloud first
+      final snapshot = await _expensesCollection
+          .orderBy('expenseDate', descending: true)
+          .get();
+
+      final expenses = snapshot.docs
+          .map((doc) => ExpenseModel.fromMap(doc.data(), doc.id))
+          .toList();
+
+      return expenses;
+    } catch (e) {
+      // If cloud read fails (offline), fall back to local
+      debugPrint('Cloud read failed, using local cache: $e');
+      final localRows = await OfflineLocalReadService.instance
+          .getBranchCollection(
+            businessId: businessId,
+            branchId: branchId,
+            collectionName: 'expenses',
+          );
+
+      if (localRows.isEmpty) {
+        return [];
+      }
+
       return localRows
           .map(
             (doc) => ExpenseModel.fromMap(
@@ -100,22 +115,13 @@ class ExpenseRepository {
           )
           .toList();
     }
-
-    final snapshot = await _expensesCollection
-        .orderBy('expenseDate', descending: true)
-        .get();
-
-    return snapshot.docs
-        .map((doc) => ExpenseModel.fromMap(doc.data(), doc.id))
-        .toList();
   }
 
   Future<ExpenseModel> addExpense(ExpenseModel expense) async {
     final docRef = _expensesCollection.doc(
       expense.id.isEmpty ? null : expense.id,
     );
-    final currentDayStartAt =
-        await _getCurrentBusinessDayStartAt() ?? DateTime.now().toUtc();
+    final currentDayStartAt = _fixedBusinessDayStartAtUtc();
     final toSave = expense.copyWith(
       id: docRef.id,
       businessDayStartAt: currentDayStartAt,
@@ -136,6 +142,8 @@ class ExpenseRepository {
   Future<List<ExpenseModel>> getCurrentBusinessDayExpenses(
     DateTime businessDayStartAt,
   ) async {
+    final businessDayEndAt = businessDayStartAt.add(const Duration(days: 1));
+
     final localRows = await OfflineLocalReadService.instance
         .getBranchCollection(
           businessId: businessId,
@@ -156,7 +164,8 @@ class ExpenseRepository {
               return marker.millisecondsSinceEpoch ==
                   businessDayStartAt.millisecondsSinceEpoch;
             }
-            return !expense.expenseDate.isBefore(businessDayStartAt);
+            return !expense.expenseDate.isBefore(businessDayStartAt) &&
+                expense.expenseDate.isBefore(businessDayEndAt);
           })
           .toList();
     }
@@ -175,6 +184,7 @@ class ExpenseRepository {
 
     final fallbackSnapshot = await _expensesCollection
         .where('expenseDate', isGreaterThanOrEqualTo: businessDayStartAt)
+        .where('expenseDate', isLessThan: businessDayEndAt)
         .orderBy('expenseDate', descending: true)
         .get();
     return fallbackSnapshot.docs

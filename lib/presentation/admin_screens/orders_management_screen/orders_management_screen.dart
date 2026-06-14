@@ -1,10 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
-import 'package:hotel_management_system/data/models/close_day_report.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
 import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
@@ -47,7 +43,6 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
   bool canChangeDiningTable = false;
   bool canViewAllOrders = false;
   bool _showAllOrders = false;
-  bool _isClosingDay = false;
 
   Set<OrderStatus> _selectedStatuses = {
     OrderStatus.pending,
@@ -91,13 +86,13 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
     super.dispose();
   }
 
-  // 🌟 NEW HELPER: Check if an order should be in the blink window (1 minute)
+  // 🌟 NEW HELPER: Check if an order should be in the blink window (5 minutes)
   bool _isOrderWithinBlinkWindow(OrderModel order) {
-    const blinkDuration = Duration(minutes: 1);
+    const blinkDuration = Duration(minutes: 5);
     final now = DateTime.now();
     final difference = now.difference(order.createdAt);
 
-    // Order is in the window if it's less than 1 minute old AND it's one of the currently filtered statuses
+    // Order is in the window if it's less than 5 minutes old AND it's one of the currently filtered statuses
     return difference < blinkDuration &&
         (_selectedStatuses.isEmpty ||
             _selectedStatuses.contains(order.orderStatus));
@@ -136,7 +131,7 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
       error: (error, _) => OrderState(error: error.toString()),
     );
 
-    // 🌟 REAL-TIME BLINKING LOGIC (1 MINUTE DURATION)
+    // 🌟 REAL-TIME BLINKING LOGIC (5 MINUTES DURATION)
 
     // 1. Check if any order should be blinking based on its creation time
     final bool shouldBlinkActive = orderState.orders.any(
@@ -148,13 +143,13 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
 
       // 2. Start a *periodic* timer to toggle the blink state every 500ms
       _blinkTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
-        // Check if any order is still in the 1-minute window
+        // Check if any order is still in the 5-minute window
         final anyStillBlinking = orderState.orders.any(
           _isOrderWithinBlinkWindow,
         );
 
         if (!anyStillBlinking) {
-          // No orders are left in the 1-minute window. Stop the timer.
+          // No orders are left in the 5-minute window. Stop the timer.
           timer.cancel();
           if (mounted) {
             setState(() {
@@ -189,6 +184,9 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
       }
     }
 
+    final attentionOrders = orderState.orders.where(_isAttentionOrder).toList();
+    final attentionOrderCount = attentionOrders.length;
+
     final userNotifier = ref.read(userProvider.notifier);
     canCreateOrder = userNotifier.hasPermissionOfCurrentUser(
       Permissions.createOrder,
@@ -220,11 +218,11 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
         centerTitle: true,
         elevation: 0,
         actions: [
-          IconButton(
-            onPressed: _isClosingDay ? null : _handleCloseDay,
-            icon: const Icon(Icons.event_busy),
-            tooltip: 'Close Day',
-          ),
+          if (attentionOrderCount > 0)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _buildBellIndicator(context, count: attentionOrderCount),
+            ),
           TextButton.icon(
             onPressed: _toggleOrderScope,
             icon: Icon(_showAllOrders ? Icons.today : Icons.history),
@@ -366,168 +364,6 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
     final hour = value.hour.toString().padLeft(2, '0');
     final minute = value.minute.toString().padLeft(2, '0');
     return '$year-$month-$day $hour:$minute';
-  }
-
-  Future<void> _handleCloseDay() async {
-    final shouldClose =
-        await showDialog<bool>(
-          context: context,
-          builder: (context) {
-            return AlertDialog(
-              title: const Text('Close Day'),
-              content: const Text(
-                'This will close the current business day and start a new one. Continue?',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Close Day'),
-                ),
-              ],
-            );
-          },
-        ) ??
-        false;
-
-    if (!shouldClose || !mounted) return;
-
-    final selectedUser = ref.read(userProvider).selectedUser;
-    setState(() => _isClosingDay = true);
-    try {
-      final closeDayRequest = (
-        businessId: businessId,
-        branchId: branchId,
-        tableNotifier: tableNotifier,
-        closedBy: selectedUser?.uid,
-      );
-      ref.invalidate(closeCurrentDayReportProvider(closeDayRequest));
-      final report = await ref.read(
-        closeCurrentDayReportProvider(closeDayRequest).future,
-      );
-
-      if (!mounted) return;
-      await _showCloseDayReportDialog(report);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to close day: $e')));
-    } finally {
-      if (mounted) {
-        setState(() => _isClosingDay = false);
-      }
-    }
-  }
-
-  String _fmtMoney(double value) => value.toStringAsFixed(2);
-
-  Future<void> _showCloseDayReportDialog(CloseDayReport report) async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Day Closed Report'),
-          content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Start: ${_formatBusinessDayDateTime(report.dayStartAt.toLocal())}',
-                  ),
-                  Text(
-                    'Closed: ${_formatBusinessDayDateTime(report.dayClosedAt.toLocal())}',
-                  ),
-                  const SizedBox(height: 12),
-                  Text('Total Orders: ${report.totalOrders}'),
-                  Text('Completed: ${report.completedOrders}'),
-                  Text('Pending: ${report.pendingOrders}'),
-                  Text('In Progress: ${report.inProgressOrders}'),
-                  Text('Cancelled: ${report.cancelledOrders}'),
-                  Text('Refunded: ${report.refundedOrders}'),
-                  const Divider(height: 24),
-                  Text('Total Amount: Rs ${_fmtMoney(report.totalAmount)}'),
-                  Text('Total Expenses: Rs ${_fmtMoney(report.totalExpenses)}'),
-                  Text(
-                    'Cash In Hand After Expense: Rs ${_fmtMoney(report.cashInHandAfterExpenses)}',
-                  ),
-                  Text('Profit / Loss: Rs ${_fmtMoney(report.profitOrLoss)}'),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () async {
-                final pdf = pw.Document();
-                pdf.addPage(
-                  pw.Page(
-                    pageFormat: PdfPageFormat.a4,
-                    build: (context) {
-                      return pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Text(
-                            'Close Day Report',
-                            style: pw.TextStyle(
-                              fontSize: 20,
-                              fontWeight: pw.FontWeight.bold,
-                            ),
-                          ),
-                          pw.SizedBox(height: 12),
-                          pw.Text(
-                            'Start: ${_formatBusinessDayDateTime(report.dayStartAt.toLocal())}',
-                          ),
-                          pw.Text(
-                            'Closed: ${_formatBusinessDayDateTime(report.dayClosedAt.toLocal())}',
-                          ),
-                          pw.SizedBox(height: 12),
-                          pw.Text('Total Orders: ${report.totalOrders}'),
-                          pw.Text('Completed: ${report.completedOrders}'),
-                          pw.Text('Pending: ${report.pendingOrders}'),
-                          pw.Text('In Progress: ${report.inProgressOrders}'),
-                          pw.Text('Cancelled: ${report.cancelledOrders}'),
-                          pw.Text('Refunded: ${report.refundedOrders}'),
-                          pw.SizedBox(height: 12),
-                          pw.Text(
-                            'Total Amount: Rs ${_fmtMoney(report.totalAmount)}',
-                          ),
-                          pw.Text(
-                            'Total Expenses: Rs ${_fmtMoney(report.totalExpenses)}',
-                          ),
-                          pw.Text(
-                            'Cash In Hand After Expense: Rs ${_fmtMoney(report.cashInHandAfterExpenses)}',
-                          ),
-                          pw.Text(
-                            'Profit / Loss: Rs ${_fmtMoney(report.profitOrLoss)}',
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                );
-
-                await Printing.layoutPdf(
-                  onLayout: (format) async => pdf.save(),
-                );
-              },
-              icon: const Icon(Icons.picture_as_pdf),
-              label: const Text('Download PDF'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   Widget _buildStatusChipFilter(ColorScheme colorScheme) {
@@ -984,174 +820,264 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    // Check if this specific card should be actively blinking
-    // Blinking only occurs if the order is new AND the global periodic timer is in the 'on' state.
     final bool isBlinkingNow = isNew && _isBlinking;
+    final blinkAccentColor = _resolveBlinkAccentColor(order, colorScheme);
+    final showAttentionBadge = isNew && _isAttentionOrder(order);
 
-    // Calculate color based on the blinking state
-    Color cardColor = isBlinkingNow
-        ? colorScheme.primary.withOpacity(
-            0.25, // Strong highlight when 'on'
-          )
+    final Color cardColor = isBlinkingNow
+        ? blinkAccentColor.withOpacity(0.25)
         : isNew
-        ? colorScheme.primary.withOpacity(
-            0.05,
-          ) // Subtle background when 'off' (or base highlight)
+        ? blinkAccentColor.withOpacity(0.05)
         : colorScheme.surface;
 
-    // Use AnimatedContainer for smooth transitions
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 500),
-      curve: Curves.easeInOut,
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(12),
-        border: isBlinkingNow
-            ? Border.all(
-                color: colorScheme.primary,
-                width: 3, // Thicker border when 'on'
-              )
-            : isNew
-            ? Border.all(
-                color: colorScheme.primary.withOpacity(0.5),
-                width: 1, // Thin border when 'off'
-              )
-            : Border.all(
-                color: colorScheme.outline.withOpacity(0.5),
-                width: 0.5,
-              ),
-        boxShadow: isBlinkingNow
-            ? [
-                BoxShadow(
-                  color: colorScheme.primary.withOpacity(0.5),
-                  blurRadius: 8,
-                  spreadRadius: 2,
-                ),
-              ]
-            : null,
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _showOrderDetails(context, order),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              // Order Header
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Order #${order.orderId.length > 8 ? order.orderId.substring(0, 8) : order.orderId}',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'User: ${order.userName}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+          decoration: BoxDecoration(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(12),
+            border: isBlinkingNow
+                ? Border.all(color: blinkAccentColor, width: 3)
+                : isNew
+                ? Border.all(color: blinkAccentColor.withOpacity(0.5), width: 1)
+                : Border.all(
+                    color: colorScheme.outline.withOpacity(0.5),
+                    width: 0.5,
+                  ),
+            boxShadow: isBlinkingNow
+                ? [
+                    BoxShadow(
+                      color: blinkAccentColor.withOpacity(0.5),
+                      blurRadius: 8,
+                      spreadRadius: 2,
                     ),
-                  ),
-                  PopupMenuButton(
-                    itemBuilder: (context) => _buildPopupMenuItems(order),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 8),
-
-              // Order Info Row
-              Row(
+                  ]
+                : null,
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _showOrderDetails(context, order),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildTypeIcon(order.orderType),
-                  const SizedBox(width: 4),
-                  Text(
-                    _getTypeText(order.orderType),
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w500,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Order #${order.orderId.length > 8 ? order.orderId.substring(0, 8) : order.orderId}',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'User: ${order.userName}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuButton(
+                        itemBuilder: (context) => _buildPopupMenuItems(order),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      _buildTypeIcon(order.orderType),
+                      const SizedBox(width: 4),
+                      Text(
+                        _getTypeText(order.orderType),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const Spacer(),
+                      _buildStatusChip(order.orderStatus, colorScheme),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (order.orderType == OrderType.dining &&
+                      order.diningTable != null) ...[
+                    Text(
+                      'Table: ${order.diningTable!.tableNumber} Room: ${order.diningTable!.roomId ?? ''}',
+                      style: theme.textTheme.bodySmall,
                     ),
-                  ),
-                  const Spacer(),
-                  _buildStatusChip(order.orderStatus, colorScheme),
-                ],
-              ),
-
-              const SizedBox(height: 8),
-
-              // Order Details
-              if (order.orderType == OrderType.dining &&
-                  order.diningTable != null) ...[
-                Text(
-                  'Table: ${order.diningTable!.tableNumber} Room: ${order.diningTable!.roomId ?? ''}',
-                  style: theme.textTheme.bodySmall,
-                ),
-                const SizedBox(height: 4),
-              ],
-
-              if (order.orderType == OrderType.delivery &&
-                  order.deliveryAddress != null) ...[
-                Text(
-                  'Address: ${order.deliveryAddress}',
-                  style: theme.textTheme.bodySmall,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-              ],
-
-              if (order.waiterId != null) ...[
-                Text(
-                  'Waiter: ${order.waiterId}',
-                  style: theme.textTheme.bodySmall,
-                ),
-                const SizedBox(height: 4),
-              ],
-
-              // Items Summary
-              Text(
-                '${order.items.length} item${order.items.length > 1 ? 's' : ''}',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-
-              const SizedBox(height: 8),
-
-              // Footer
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
+                    const SizedBox(height: 4),
+                  ],
+                  if (order.orderType == OrderType.delivery &&
+                      order.deliveryAddress != null) ...[
+                    Text(
+                      'Address: ${order.deliveryAddress}',
+                      style: theme.textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  if (order.waiterId != null) ...[
+                    Text(
+                      'Waiter: ${order.waiterId}',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 4),
+                  ],
                   Text(
-                    _formatDateTime(order.createdAt),
+                    '${order.items.length} item${order.items.length > 1 ? 's' : ''}',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
-                  Text(
-                    '\$${order.totalAmount.toStringAsFixed(2)}',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: colorScheme.primary,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _formatDateTime(order.createdAt),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      Text(
+                        '\$${order.totalAmount.toStringAsFixed(2)}',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: colorScheme.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
+        ),
+        if (showAttentionBadge)
+          Positioned(top: -8, right: 12, child: _buildAttentionBadge(order)),
+      ],
+    );
+  }
+
+  bool _isAttentionOrder(OrderModel order) {
+    return _isQrDiningOrder(order) || _isOnlineDeliveryOrder(order);
+  }
+
+  bool _isQrDiningOrder(OrderModel order) {
+    final waiterId = (order.waiterId ?? '').toLowerCase();
+    final waiterName = (order.waiterName ?? '').toLowerCase();
+    return order.orderType == OrderType.dining &&
+        (waiterId.startsWith('qr_') || waiterName.contains('qr code'));
+  }
+
+  bool _isOnlineDeliveryOrder(OrderModel order) {
+    return order.orderType == OrderType.delivery &&
+        (order.userId ?? '').trim().isNotEmpty;
+  }
+
+  Widget _buildAttentionBadge(OrderModel order) {
+    final isQr = _isQrDiningOrder(order);
+    final badgeColor = isQr ? Colors.orange : Colors.redAccent;
+    final label = isQr ? 'QR' : 'DEL';
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: badgeColor,
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: [
+          BoxShadow(
+            color: badgeColor.withOpacity(0.35),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.notifications_active_rounded,
+              size: 14,
+              color: Colors.white,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  Widget _buildBellIndicator(BuildContext context, {required int count}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.notifications_active_rounded, size: 18),
+          const SizedBox(width: 6),
+          Text(
+            '$count',
+            style: Theme.of(
+              context,
+            ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _resolveBlinkAccentColor(OrderModel order, ColorScheme colorScheme) {
+    final waiterId = (order.waiterId ?? '').toLowerCase();
+    final waiterName = (order.waiterName ?? '').toLowerCase();
+    final userId = (order.userId ?? '').toLowerCase();
+
+    final isQrDiningOrder =
+        order.orderType == OrderType.dining &&
+        (waiterId.startsWith('qr_') || waiterName.contains('qr code'));
+
+    final isClientDeliveryOrder =
+        order.orderType == OrderType.delivery &&
+        order.userId != null &&
+        userId.isNotEmpty &&
+        userId != 'guest';
+
+    if (isQrDiningOrder) {
+      return Colors.orange;
+    }
+
+    if (isClientDeliveryOrder) {
+      return colorScheme.error;
+    }
+
+    // Default for admin/waiter-created orders.
+    return Colors.green;
   }
 
   Widget _buildStatusChip(OrderStatus status, ColorScheme colorScheme) {

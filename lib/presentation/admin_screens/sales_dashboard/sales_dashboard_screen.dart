@@ -1,10 +1,12 @@
 // sales_dashboard_screen.dart
+import 'dart:async';
 import 'dart:typed_data'; // Required for Uint8List
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart'; // REQUIRED: For saving, sharing, and printing the PDF
+import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/sales_model_and_management.dart';
 import 'package:hotel_management_system/presentation/admin_screens/sales_dashboard/widgets/order_type_breakdown_widget.dart';
 import 'package:hotel_management_system/presentation/admin_screens/sales_dashboard/widgets/revenue_chart_widget.dart';
@@ -28,6 +30,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
   // Parameters for the family provider - holds businessId and branchId as a record.
   // Keep nullable because user state may not be ready during first refresh build.
   ({String businessId, String branchId})? salesParams;
+  Timer? _businessDayRefreshTimer;
 
   ({String businessId, String branchId}) get _salesParams => salesParams!;
 
@@ -35,6 +38,33 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
   void initState() {
     super.initState();
     _initializeSalesParams();
+    _scheduleBusinessDayAutoRefresh();
+  }
+
+  @override
+  void dispose() {
+    _businessDayRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleBusinessDayAutoRefresh() {
+    _businessDayRefreshTimer?.cancel();
+
+    final now = DateTime.now();
+    final fourAmToday = DateTime(now.year, now.month, now.day, 4, 0, 0);
+    final nextBoundary = now.isBefore(fourAmToday)
+        ? fourAmToday
+        : fourAmToday.add(const Duration(days: 1));
+
+    final delay = nextBoundary.difference(now) + const Duration(seconds: 1);
+
+    _businessDayRefreshTimer = Timer(delay, () {
+      if (!mounted) return;
+      if (salesParams != null) {
+        _refreshReport(showMessage: false);
+      }
+      _scheduleBusinessDayAutoRefresh();
+    });
   }
 
   void _initializeSalesParams() {
@@ -126,6 +156,24 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'Business day starts and closes automatically at 4:00 AM.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   // Time Period Selector widget for switching between reports
                   _buildTimePeriodSelector(),
                   const SizedBox(height: 24),
@@ -244,15 +292,20 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
   /// Quick Stats Section Widget Builder
   /// Displays key performance indicators: Total Revenue, Total Orders, Average Order Value, Active Orders
   Widget _buildQuickStatsSection(SalesReport? report) {
+    final revenue = report?.totalRevenue ?? 0.0;
+    final expenses = report?.totalExpenses ?? 0.0;
+    final activeOrders =
+        (report?.ordersByStatus[OrderStatus.pending] ?? 0) +
+        (report?.ordersByStatus[OrderStatus.inProgress] ?? 0) +
+        (report?.ordersByStatus[OrderStatus.ready] ?? 0);
     return SalesStatsCards(
-      // Use null-aware operator (??) to default to 0.0 if report is null
-      totalRevenue: report?.totalRevenue ?? 0.0,
-      totalExpenses: report?.totalExpenses ?? 0.0,
+      totalRevenue: revenue,
+      totalExpenses: expenses,
       profitOrLoss: report?.profitOrLoss ?? 0.0,
+      cashInHand: revenue - expenses,
       totalOrders: report?.totalOrders ?? 0,
       averageOrderValue: report?.averageOrderValue ?? 0.0,
-      // Active orders need a separate stream/fetch, placeholder for now
-      activeOrders: 12,
+      activeOrders: activeOrders,
     );
   }
 
@@ -288,7 +341,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
 
   /// Refresh Report Function
   /// Re-fetches the report for the currently selected time period or custom date range
-  void _refreshReport() {
+  void _refreshReport({bool showMessage = true}) {
     // Read the current state to get selected period or custom dates
     final state = ref.read(salesProvider(_salesParams));
     final notifier = ref.read(salesProvider(_salesParams).notifier);
@@ -308,9 +361,11 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
     }
 
     // Show refreshing indicator to user
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Refreshing report...')));
+    if (showMessage) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Refreshing report...')));
+    }
   }
 
   // -----------------------------------------------------------------

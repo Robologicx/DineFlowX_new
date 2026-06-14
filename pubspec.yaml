@@ -55,7 +55,6 @@ dependencies:
   provider: ^6.1.5+1
   qr_flutter: ^4.1.0
   cached_network_image: ^3.2.3
-
   # For delivery order
   geolocator: ^10.1.0
   geocoding: ^2.1.1
