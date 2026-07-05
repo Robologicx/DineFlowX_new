@@ -124,11 +124,6 @@ class _BusinessManagementScreenState
         elevation: 0,
         actions: [
           IconButton(
-            onPressed: () => _showCreateBusinessDialog(context),
-            icon: const Icon(Icons.add_business),
-            tooltip: 'Add Business',
-          ),
-          IconButton(
             onPressed: () => ref
                 .read(businessProvider.notifier)
                 .loadBusinesses(ownerId: widget.ownerId),
@@ -195,11 +190,6 @@ class _BusinessManagementScreenState
           Expanded(child: _buildContent(businessState, colorScheme)),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showCreateBusinessDialog(context),
-        icon: const Icon(Icons.add_business),
-        label: const Text('Add Business'),
-      ),
     );
   }
 
@@ -213,27 +203,19 @@ class _BusinessManagementScreenState
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 64, color: colorScheme.error),
+            Icon(Icons.construction, size: 64, color: colorScheme.primary),
             const SizedBox(height: 16),
             Text(
-              'Error loading businesses',
+              'Work in progress...',
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
             Text(
-              state.error!,
+              'This section is under development.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () => ref
-                  .read(businessProvider.notifier)
-                  .loadBusinesses(ownerId: widget.ownerId),
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
             ),
           ],
         ),

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_button.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_text_field.dart';
 import 'package:hotel_management_system/routes/admin_app_routes.dart';
+import 'package:hotel_management_system/state_management/app_manager.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
 
 class AdminLoginForm extends ConsumerStatefulWidget {
@@ -39,6 +40,7 @@ class _LoginFormState extends ConsumerState<AdminLoginForm> {
 
       final state = ref.read(authNotifierProvider);
       if (state.isLoggedIn) {
+        ref.invalidate(appInitializationProvider);
         Navigator.pushNamedAndRemoveUntil(
           context,
           AdminAppRoutes.splash,

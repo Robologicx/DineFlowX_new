@@ -17,6 +17,7 @@ import 'package:printing/printing.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 
 class OrderPdfGenerator {
   // Tax rate (commented out for later use)
@@ -40,6 +41,7 @@ class OrderPdfGenerator {
     final businessName = business?.title.trim().isNotEmpty == true
         ? business!.title.trim()
         : 'Business';
+    final currencyCode = business?.currencyCode;
     final businessLogo = business?.logoUrl?.trim().isNotEmpty == true
         ? await _tryLoadBusinessLogo(business!.logoUrl!.trim())
         : null;
@@ -49,37 +51,52 @@ class OrderPdfGenerator {
     // final taxAmount = includeTax ? subtotal * taxRate : 0.0;
     // final grandTotal = subtotal + taxAmount;
     final grandTotal = subtotal; // Use this when tax is disabled
-    final PdfPageFormat format = PdfPageFormat(80 * 200, double.infinity);
+    final itemCount = order.items.isEmpty ? 1 : order.items.length;
+    const baseHeightMm = 150.0;
+    const perItemHeightMm = 8.0;
+    final estimatedHeightMm = (baseHeightMm + (itemCount * perItemHeightMm))
+        .clamp(220.0, 1200.0)
+        .toDouble();
+
+    final PdfPageFormat format = PdfPageFormat(
+      80 * PdfPageFormat.mm,
+      estimatedHeightMm * PdfPageFormat.mm,
+      marginLeft: 0,
+      marginRight: 0,
+      marginTop: 0,
+      marginBottom: 0,
+    );
 
     pdf.addPage(
       pw.Page(
         pageFormat: format,
-        margin: const pw.EdgeInsets.all(32),
+        margin: pw.EdgeInsets.symmetric(horizontal: 4 * PdfPageFormat.mm),
         build: (pw.Context context) {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              // Header Section
-              _buildHeader(
-                businessName: businessName,
-                businessLogo: businessLogo,
+              pw.Center(
+                child: _buildHeader(
+                  businessName: businessName,
+                  businessLogo: businessLogo,
+                ),
               ),
-              pw.SizedBox(height: 20),
-              pw.Divider(thickness: 2),
-              pw.SizedBox(height: 20),
-              // Order Information
+              pw.SizedBox(height: 6),
+              pw.Divider(thickness: 1),
+              pw.SizedBox(height: 6),
               _buildOrderInfo(order),
-              pw.SizedBox(height: 20),
-              // Customer & Order Type Specific Info
+              pw.SizedBox(height: 6),
               _buildCustomerInfo(order, roomName),
-              pw.SizedBox(height: 20),
-              // Items Table
-              _buildItemsTable(order.items),
-              pw.SizedBox(height: 20),
-              // Summary Section
-              _buildSummary(subtotal, grandTotal, includeTax),
-              pw.SizedBox(height: 60),
-              // Footer
+              pw.SizedBox(height: 6),
+              _buildItemsTable(order.items, currencyCode: currencyCode),
+              pw.SizedBox(height: 6),
+              _buildSummary(
+                subtotal,
+                grandTotal,
+                includeTax,
+                currencyCode: currencyCode,
+              ),
+              pw.SizedBox(height: 8),
               _buildFooter(businessName),
             ],
           );
@@ -96,28 +113,22 @@ class OrderPdfGenerator {
     pw.ImageProvider? businessLogo,
   }) {
     return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.center,
+      mainAxisSize: pw.MainAxisSize.min,
       children: [
         if (businessLogo != null)
           pw.Container(
-            height: 56,
-            width: 56,
-            margin: const pw.EdgeInsets.only(bottom: 10),
+            height: 128,
+            width: 128,
+            margin: const pw.EdgeInsets.only(bottom: 6),
             child: pw.Image(businessLogo, fit: pw.BoxFit.contain),
           ),
-        pw.SizedBox(height: 10),
+        pw.SizedBox(height: 2),
         pw.Text(
           businessName,
-          style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold),
+          textAlign: pw.TextAlign.center,
+          style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
         ),
-        // pw.SizedBox(height: 5),
-        // pw.Text(
-        //   businessAddress,
-        //   style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
-        // ),
-        // pw.Text(
-        //   'Phone: $businessPhone | Email: $businessEmail',
-        //   style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
-        // ),
       ],
     );
   }
@@ -125,62 +136,26 @@ class OrderPdfGenerator {
   /// Build order information section
   static pw.Widget _buildOrderInfo(OrderModel order) {
     return pw.Container(
-      padding: const pw.EdgeInsets.all(12),
-      decoration: pw.BoxDecoration(
-        color: PdfColors.grey200,
-        borderRadius: pw.BorderRadius.circular(8),
-      ),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Text(
-                'ORDER RECEIPT',
-                style: pw.TextStyle(
-                  fontSize: 18,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.SizedBox(height: 5),
-              pw.Text(
-                'Order ID: ${order.orderId}',
-                style: const pw.TextStyle(fontSize: 10),
-              ),
-            ],
+          pw.Text(
+            'ORDER RECEIPT',
+            style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
           ),
-          pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.end,
-            children: [
-              pw.Text(
-                _formatDate(order.createdAt),
-                style: const pw.TextStyle(fontSize: 10),
-              ),
-              pw.Text(
-                _formatTime(order.createdAt),
-                style: const pw.TextStyle(fontSize: 10),
-              ),
-              pw.SizedBox(height: 5),
-              pw.Container(
-                padding: const pw.EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
-                decoration: pw.BoxDecoration(
-                  color: _getOrderTypeColor(order.orderType),
-                  borderRadius: pw.BorderRadius.circular(4),
-                ),
-                child: pw.Text(
-                  _formatOrderType(order.orderType),
-                  style: pw.TextStyle(
-                    fontSize: 10,
-                    fontWeight: pw.FontWeight.bold,
-                    color: PdfColors.white,
-                  ),
-                ),
-              ),
-            ],
+          pw.SizedBox(height: 2),
+          pw.Text(
+            'Order ID: ${order.orderId}',
+            style: const pw.TextStyle(fontSize: 8),
+          ),
+          pw.Text(
+            'Date: ${_formatDate(order.createdAt)} ${_formatTime(order.createdAt)}',
+            style: const pw.TextStyle(fontSize: 8),
+          ),
+          pw.Text(
+            'Type: ${_formatOrderType(order.orderType)}',
+            style: const pw.TextStyle(fontSize: 8),
           ),
         ],
       ),
@@ -190,11 +165,7 @@ class OrderPdfGenerator {
   /// Build customer and order-specific information
   static pw.Widget _buildCustomerInfo(OrderModel order, String? roomName) {
     return pw.Container(
-      padding: const pw.EdgeInsets.all(12),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.grey300),
-        borderRadius: pw.BorderRadius.circular(8),
-      ),
+      padding: const pw.EdgeInsets.symmetric(vertical: 2),
       child: pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
@@ -203,9 +174,9 @@ class OrderPdfGenerator {
           if (order.userPhoneNo != null && order.userPhoneNo!.isNotEmpty)
             _buildInfoRow('Phone:', order.userPhoneNo!),
 
-          pw.SizedBox(height: 8),
+          pw.SizedBox(height: 3),
           pw.Divider(),
-          pw.SizedBox(height: 8),
+          pw.SizedBox(height: 3),
 
           // Order Type Specific Info
           if (order.orderType == OrderType.dining) ...[
@@ -231,44 +202,50 @@ class OrderPdfGenerator {
   }
 
   /// Build items table
-  static pw.Widget _buildItemsTable(List<OrderItem> items) {
-    return pw.Table(
-      border: pw.TableBorder.all(color: PdfColors.grey300),
-      columnWidths: {
-        0: const pw.FlexColumnWidth(1),
-        1: const pw.FlexColumnWidth(3),
-        2: const pw.FlexColumnWidth(1.5),
-        3: const pw.FlexColumnWidth(1.5),
-        4: const pw.FlexColumnWidth(2),
-      },
+  static pw.Widget _buildItemsTable(
+    List<OrderItem> items, {
+    String? currencyCode,
+  }) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        // Header Row
-        pw.TableRow(
-          decoration: const pw.BoxDecoration(color: PdfColors.grey300),
-          children: [
-            _buildTableCell('#', isHeader: true),
-            _buildTableCell('Item', isHeader: true),
-            _buildTableCell('Qty', isHeader: true),
-            _buildTableCell('Price', isHeader: true),
-            _buildTableCell('Total', isHeader: true),
-          ],
-        ),
-        // Item Rows
-        ...items.asMap().entries.map((entry) {
-          final index = entry.key + 1;
-          final item = entry.value;
+        pw.Divider(),
+        ...items.map((item) {
           final total = item.price * item.quantity;
-
-          return pw.TableRow(
-            children: [
-              _buildTableCell(index.toString()),
-              _buildTableCell(item.productName),
-              _buildTableCell(item.quantity.toString()),
-              _buildTableCell('Rs ${item.price.toStringAsFixed(2)}'),
-              _buildTableCell('Rs ${total.toStringAsFixed(2)}'),
-            ],
+          return pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(vertical: 2),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  item.productName,
+                  style: pw.TextStyle(
+                    fontSize: 8,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'Qty: ${item.quantity}',
+                      style: const pw.TextStyle(fontSize: 8),
+                    ),
+                    pw.Text(
+                      'Price: ${CurrencyFormatter.formatAmount(item.price, currencyCode: currencyCode)}',
+                      style: const pw.TextStyle(fontSize: 8),
+                    ),
+                    pw.Text(
+                      'Total: ${CurrencyFormatter.formatAmount(total, currencyCode: currencyCode)}',
+                      style: const pw.TextStyle(fontSize: 8),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           );
         }),
+        pw.Divider(),
       ],
     );
   }
@@ -277,17 +254,20 @@ class OrderPdfGenerator {
   static pw.Widget _buildSummary(
     double subtotal,
     double grandTotal,
-    bool includeTax,
-  ) {
+    bool includeTax, {
+    String? currencyCode,
+  }) {
     return pw.Container(
-      padding: const pw.EdgeInsets.all(12),
-      decoration: pw.BoxDecoration(
-        color: PdfColors.grey100,
-        borderRadius: pw.BorderRadius.circular(8),
-      ),
+      padding: const pw.EdgeInsets.symmetric(vertical: 2),
       child: pw.Column(
         children: [
-          _buildSummaryRow('Subtotal:', 'Rs ${subtotal.toStringAsFixed(2)}'),
+          _buildSummaryRow(
+            'Subtotal:',
+            CurrencyFormatter.formatAmount(
+              subtotal,
+              currencyCode: currencyCode,
+            ),
+          ),
 
           // Tax row (commented out for later use)
           // if (includeTax) ...[
@@ -297,14 +277,17 @@ class OrderPdfGenerator {
           //     'Rs ${(subtotal * taxRate).toStringAsFixed(2)}',
           //   ),
           // ],
-          pw.SizedBox(height: 8),
+          pw.SizedBox(height: 3),
           pw.Divider(thickness: 2),
-          pw.SizedBox(height: 8),
+          pw.SizedBox(height: 3),
           _buildSummaryRow(
             'GRAND TOTAL:',
-            'Rs ${grandTotal.toStringAsFixed(2)}',
+            CurrencyFormatter.formatAmount(
+              grandTotal,
+              currencyCode: currencyCode,
+            ),
             isBold: true,
-            fontSize: 16,
+            fontSize: 11,
           ),
         ],
       ),
@@ -318,12 +301,18 @@ class OrderPdfGenerator {
         pw.Divider(),
         pw.Text(
           'Thank you for your order!',
-          style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+          style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
         ),
         pw.Text(
           businessName,
-          style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+          style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600),
         ),
+        pw.SizedBox(height: 2),
+        pw.Text(
+          'Powered by RoboLogicx',
+          style: const pw.TextStyle(fontSize: 7),
+        ),
+        pw.Text('www.robologicx.org', style: const pw.TextStyle(fontSize: 7)),
       ],
     );
   }
@@ -335,14 +324,14 @@ class OrderPdfGenerator {
       child: pw.Row(
         children: [
           pw.SizedBox(
-            width: 120,
+            width: 58,
             child: pw.Text(
               label,
-              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+              style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
             ),
           ),
           pw.Expanded(
-            child: pw.Text(value, style: const pw.TextStyle(fontSize: 10)),
+            child: pw.Text(value, style: const pw.TextStyle(fontSize: 8)),
           ),
         ],
       ),

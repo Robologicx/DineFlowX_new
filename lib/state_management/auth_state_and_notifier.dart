@@ -115,6 +115,26 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   void clearError() => state = state.copyWith(error: null);
 
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      await _service.changePassword(
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+      state = state.copyWith(isLoading: false, error: null);
+    } on FirebaseAuthException catch (e) {
+      state = state.copyWith(error: e.message, isLoading: false);
+      rethrow;
+    } catch (e) {
+      state = state.copyWith(error: e.toString(), isLoading: false);
+      rethrow;
+    }
+  }
+
   Future<void> deleteAccount() async {
     state = state.copyWith(isLoading: true);
     try {

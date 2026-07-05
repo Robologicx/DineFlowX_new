@@ -92,6 +92,11 @@ class OrderService {
     await _orderRepository.assignWaiter(orderId, waiterId, waiterName);
   }
 
+  /// Update an order with new items and total amount
+  Future<void> updateOrder(OrderModel order) async {
+    await _orderRepository.updateOrder(order);
+  }
+
   /// Delete an order (admin/owner only)
   Future<void> deleteOrder(String orderId) async {
     await _orderRepository.deleteOrder(orderId);

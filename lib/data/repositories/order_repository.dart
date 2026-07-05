@@ -678,6 +678,14 @@ class OrderRepository {
   }
 
   /// Update order status
+  Future<void> updateOrder(OrderModel order) async {
+    try {
+      await _ordersRef.doc(order.orderId).update(order.toMap());
+    } catch (e) {
+      throw Exception('Failed to update order: $e');
+    }
+  }
+
   Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
     await OfflineFirestoreWriteQueueService.instance.setOrQueue(
       documentPath:

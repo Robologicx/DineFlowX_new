@@ -266,6 +266,48 @@ class OrderModel {
           : null,
     };
   }
+
+  OrderModel copyWith({
+    String? orderId,
+    String? userId,
+    String? userName,
+    String? userPhoneNo,
+    OrderType? orderType,
+    List<OrderItem>? items,
+    double? totalAmount,
+    OrderStatus? orderStatus,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? deliveryAddress,
+    LatLng? deliveryLocation,
+    TableModel? diningTable,
+    String? waiterId,
+    String? waiterName,
+    String? additionalNotes,
+    String? businessDayId,
+    DateTime? businessDayStartAt,
+  }) {
+    return OrderModel(
+      orderId: orderId ?? this.orderId,
+      userId: userId ?? this.userId,
+      userName: userName ?? this.userName,
+      userPhoneNo: userPhoneNo ?? this.userPhoneNo,
+      orderType: orderType ?? this.orderType,
+      items: items ?? this.items,
+      totalAmount: totalAmount ?? this.totalAmount,
+      orderStatus: orderStatus ?? this.orderStatus,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      deliveryAddress: deliveryAddress ?? this.deliveryAddress,
+      deliveryLocation: deliveryLocation ?? this.deliveryLocation,
+      diningTable: diningTable ?? this.diningTable,
+      waiterId: waiterId ?? this.waiterId,
+      waiterName: waiterName ?? this.waiterName,
+      additionalNotes: additionalNotes ?? this.additionalNotes,
+      businessDayId: businessDayId ?? this.businessDayId,
+      businessDayStartAt: businessDayStartAt ?? this.businessDayStartAt,
+    );
+  }
 }
 
 class OrderItem {

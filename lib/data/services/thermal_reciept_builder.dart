@@ -1,27 +1,38 @@
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:image/image.dart' as img;
 
 class ThermalReceiptBuilder {
-  /// Build ESC/POS bytes for a given order (80mm paper)
+  static const Duration _logoLoadTimeout = Duration(seconds: 2);
+
+  /// Build ESC/POS bytes for a given order.
+  ///
+  /// Note: esc_pos_utils_plus supports 58/72/80mm. For 4-inch printers,
+  /// we use the widest supported profile (80mm) for best visual match.
   static Future<Uint8List> generateReceiptBytes(
     OrderModel order, {
     required String type,
     String? businessName,
     String? businessLogoUrl,
+    String? currencyCode,
+    String? paperProfile,
   }) async {
     // Load capability profile for your printer
     final profile = await CapabilityProfile.load();
-    final generator = Generator(PaperSize.mm80, profile);
+    final paperSize = _resolvePaperSize(paperProfile);
+    final generator = Generator(paperSize, profile);
     List<int> bytes = [];
 
     // 1️⃣ Load logo
     Uint8List? logoBytes;
     final logoUrl = businessLogoUrl?.trim() ?? '';
-    if (logoUrl.isNotEmpty) {
-      logoBytes = await _loadNetworkBytes(logoUrl);
+    if (logoUrl.isNotEmpty && !kIsWeb) {
+      logoBytes = await _loadNetworkBytes(
+        logoUrl,
+      ).timeout(_logoLoadTimeout, onTimeout: () => null);
     }
     if (logoBytes != null) {
       final image = img.decodeImage(logoBytes);
@@ -56,7 +67,7 @@ class ThermalReceiptBuilder {
     bytes += generator.text('');
     bytes += generator.text(
       'ORDER RECEIPT',
-      styles: PosStyles(align: PosAlign.center),
+      styles: PosStyles(align: PosAlign.center, bold: true),
     );
     bytes += generator.text('');
     bytes += generator.text(type, styles: PosStyles(align: PosAlign.center));
@@ -77,6 +88,10 @@ class ThermalReceiptBuilder {
     bytes += generator.text('');
 
     // 4️⃣ Items
+    final qtyCol = paperSize == PaperSize.mm58 ? 3 : 4;
+    final moneyCol = paperSize == PaperSize.mm58 ? 4 : 4;
+    final totalCol = 12 - qtyCol - moneyCol;
+
     for (var item in order.items) {
       final total = item.price * item.quantity;
       bytes += generator.text(
@@ -84,15 +99,17 @@ class ThermalReceiptBuilder {
         styles: PosStyles(align: PosAlign.left),
       );
       bytes += generator.row([
-        PosColumn(text: 'Qty: ${item.quantity}', width: 4),
+        PosColumn(text: 'Qty: ${item.quantity}', width: qtyCol),
         PosColumn(
-          text: 'Price: ${item.price.toStringAsFixed(2)}',
-          width: 4,
+          text:
+              'Price: ${CurrencyFormatter.formatAmount(item.price, currencyCode: currencyCode)}',
+          width: moneyCol,
           styles: PosStyles(align: PosAlign.right),
         ),
         PosColumn(
-          text: 'Total: ${total.toStringAsFixed(2)}',
-          width: 4,
+          text:
+              'Total: ${CurrencyFormatter.formatAmount(total, currencyCode: currencyCode)}',
+          width: totalCol,
           styles: PosStyles(align: PosAlign.right),
         ),
       ]);
@@ -105,7 +122,10 @@ class ThermalReceiptBuilder {
     bytes += generator.row([
       PosColumn(text: 'Subtotal', width: 6),
       PosColumn(
-        text: 'Rs ${subtotal.toStringAsFixed(2)}',
+        text: CurrencyFormatter.formatAmount(
+          subtotal,
+          currencyCode: currencyCode,
+        ),
         width: 6,
         styles: PosStyles(align: PosAlign.right),
       ),
@@ -113,7 +133,10 @@ class ThermalReceiptBuilder {
     bytes += generator.row([
       PosColumn(text: 'GRAND TOTAL', width: 6, styles: PosStyles(bold: true)),
       PosColumn(
-        text: 'Rs ${subtotal.toStringAsFixed(2)}',
+        text: CurrencyFormatter.formatAmount(
+          subtotal,
+          currencyCode: currencyCode,
+        ),
         width: 6,
         styles: PosStyles(align: PosAlign.right, bold: true),
       ),
@@ -122,13 +145,21 @@ class ThermalReceiptBuilder {
     bytes += generator.text('');
     bytes += generator.text('');
     bytes += generator.text(
-      'Thank you!',
-      styles: PosStyles(align: PosAlign.center),
+      'Thank you for your order!',
+      styles: PosStyles(align: PosAlign.center, bold: true),
     );
     bytes += generator.text(
       effectiveBusinessName,
 
       styles: PosStyles(align: PosAlign.center, height: PosTextSize.size1),
+    );
+    bytes += generator.text(
+      'Powered by RoboLogicx',
+      styles: PosStyles(align: PosAlign.center),
+    );
+    bytes += generator.text(
+      'www.robologicx.org',
+      styles: PosStyles(align: PosAlign.center),
     );
 
     // 6️⃣ Feed & cut
@@ -140,6 +171,16 @@ class ThermalReceiptBuilder {
 
   static String _formatDateTime(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+  static PaperSize _resolvePaperSize(String? paperProfile) {
+    final normalized = paperProfile?.toLowerCase().trim() ?? '';
+    if (normalized.contains('58')) return PaperSize.mm58;
+    if (normalized.contains('72')) return PaperSize.mm72;
+    if (normalized.contains('4') || normalized.contains('80')) {
+      return PaperSize.mm80;
+    }
+    return PaperSize.mm80;
+  }
 
   /// Load asset image as bytes
   static Future<Uint8List?> _loadAssetBytes(String path) async {
@@ -154,11 +195,14 @@ class ThermalReceiptBuilder {
 
   static Future<Uint8List?> _loadNetworkBytes(String url) async {
     try {
+      if (kIsWeb) return null;
       final uri = Uri.tryParse(url);
       if (uri == null) return null;
       final bundle = NetworkAssetBundle(uri);
       final data = await bundle.load(uri.toString());
       return data.buffer.asUint8List();
+    } on UnsupportedError {
+      return null;
     } catch (e) {
       debugPrint('Failed to load network image $url: $e');
       return null;

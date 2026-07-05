@@ -8,6 +8,7 @@ import 'package:hotel_management_system/data/repositories/buisness_repository.da
 import 'package:hotel_management_system/data/services/auth_service.dart';
 import 'package:hotel_management_system/presentation/client_screens/cart/add_to_cart.dart';
 import 'package:hotel_management_system/presentation/client_screens/home/client_shell.dart';
+import 'package:hotel_management_system/presentation/client_screens/onboarding/spash_screen_adminside.dart';
 import 'package:hotel_management_system/state_management/theme_provider.dart';
 import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
 import 'package:hotel_management_system/core/utils/firestore_offline_config.dart';
@@ -200,8 +201,8 @@ class AdminApp extends ConsumerWidget {
         );
       },
       routes: AdminAppRoutes.routes,
-      home: deepLinkHome,
-      initialRoute: deepLinkHome == null ? AdminAppRoutes.splash : null,
+      home: deepLinkHome ?? const SplashScreen(),
+      initialRoute: null,
       // home: SplashScreen(),
     );
   }

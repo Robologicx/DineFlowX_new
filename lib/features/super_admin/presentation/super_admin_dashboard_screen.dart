@@ -11,6 +11,7 @@ import 'package:hotel_management_system/features/super_admin/presentation/sectio
 import 'package:hotel_management_system/features/super_admin/presentation/sections/orders_analytics_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/sections/revenue_analytics_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/sections/subscriptions_section.dart';
+import 'package:hotel_management_system/features/super_admin/presentation/sections/super_admin_profile_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/sections/users_section.dart';
 import 'package:hotel_management_system/features/super_admin/presentation/widgets/saas_sidebar.dart';
 import 'package:hotel_management_system/routes/admin_app_routes.dart';
@@ -295,12 +296,7 @@ class _SuperAdminDashboardScreenState
           ],
         );
       case SuperAdminSection.profile:
-        return const ModulePlaceholderSection(
-          title: 'Profile',
-          description:
-              'Manage your super admin account profile and security settings.',
-          items: ['Profile Details', 'Password / MFA', 'Session History'],
-        );
+        return const SuperAdminProfileSection();
     }
   }
 }

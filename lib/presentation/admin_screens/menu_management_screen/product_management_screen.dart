@@ -9,12 +9,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/data/models/product_model.dart';
 import 'package:hotel_management_system/data/models/category_model.dart';
 import 'package:hotel_management_system/data/models/menu_model.dart';
 import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/permissions.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:hotel_management_system/state_management/product_state_and_notifier.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:universal_html/html.dart' as html;
@@ -629,6 +631,7 @@ class _ProductManagementScreenState
     ThemeData theme,
     ColorScheme colorScheme,
   ) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     return Card(
       child: ListTile(
         contentPadding: const EdgeInsets.all(16),
@@ -677,7 +680,10 @@ class _ProductManagementScreenState
                 ),
                 const Spacer(),
                 Text(
-                  '\$${product.price.toStringAsFixed(2)}',
+                  CurrencyFormatter.formatAmount(
+                    product.price,
+                    currencyCode: currencyCode,
+                  ),
                   style: theme.textTheme.titleMedium?.copyWith(
                     color: colorScheme.primary,
                     fontWeight: FontWeight.bold,
@@ -717,6 +723,7 @@ class _ProductManagementScreenState
     ThemeData theme,
     ColorScheme colorScheme,
   ) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -795,7 +802,10 @@ class _ProductManagementScreenState
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '\$${product.price.toStringAsFixed(2)}',
+                        CurrencyFormatter.formatAmount(
+                          product.price,
+                          currencyCode: currencyCode,
+                        ),
                         style: theme.textTheme.titleMedium?.copyWith(
                           color: colorScheme.primary,
                           fontWeight: FontWeight.bold,

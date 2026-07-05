@@ -63,9 +63,12 @@ class BusinessRepository {
     return a.id == b.id &&
         a.title == b.title &&
         a.logoUrl == b.logoUrl &&
+        a.currencyCode == b.currencyCode &&
         a.ownerId == b.ownerId &&
         a.isActive == b.isActive &&
-        a.isDeleted == b.isDeleted;
+        a.isDeleted == b.isDeleted &&
+        a.updatedAt.millisecondsSinceEpoch ==
+            b.updatedAt.millisecondsSinceEpoch;
   }
 
   Stream<List<BusinessModel>> _hybridBusinessesStream({String? ownerId}) {

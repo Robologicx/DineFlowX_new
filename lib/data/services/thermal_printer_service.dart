@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/services/thermal_reciept_builder.dart';
 
 class ThermalPrinterService {
-  /// 🔹 Fetch the IP address of the primary printer from Firestore
-  Future<String?> getPrimaryPrinterIP({
+  /// Fetch primary printer settings (IP + optional paper profile).
+  Future<Map<String, String>?> getPrimaryPrinterConfig({
     required String businessId,
     required String branchId,
   }) async {
@@ -21,11 +22,16 @@ class ThermalPrinterService {
         .limit(1)
         .get();
 
-    if (snapshot.docs.isNotEmpty) {
-      return snapshot.docs.first['ip'] as String?;
-    } else {
-      return null; // no primary printer set
-    }
+    if (snapshot.docs.isEmpty) return null;
+
+    final data = snapshot.docs.first.data();
+    final ip = (data['ip'] as String?)?.trim() ?? '';
+    if (ip.isEmpty) return null;
+
+    return <String, String>{
+      'ip': ip,
+      'paperProfile': _extractPaperProfile(data),
+    };
   }
 
   /// Print an order via LAN/Wi-Fi printer
@@ -37,6 +43,12 @@ class ThermalPrinterService {
     int printerPort = 9100,
     Duration timeout = const Duration(seconds: 3),
   }) async {
+    if (kIsWeb) {
+      throw Exception(
+        'LAN thermal printing is not supported on web. Please use Windows/Android app for direct printer access.',
+      );
+    }
+
     Socket? socket;
     final effectiveBusinessId =
         (businessId != null && businessId.trim().isNotEmpty)
@@ -46,15 +58,16 @@ class ThermalPrinterService {
         ? branchId.trim()
         : BusinessRepository.temporaryBranchId;
 
-    final printerIp = await getPrimaryPrinterIP(
+    final printerConfig = await getPrimaryPrinterConfig(
       businessId: effectiveBusinessId,
       branchId: effectiveBranchId,
-    );
+    ).timeout(timeout);
     final business = await BusinessRepository().getBusinessById(
       effectiveBusinessId,
     );
 
-    if (printerIp == null || printerIp.isEmpty) {
+    final printerIp = printerConfig?['ip'] ?? '';
+    if (printerIp.isEmpty) {
       throw Exception('Printer not connected.');
     }
     try {
@@ -64,7 +77,9 @@ class ThermalPrinterService {
         type: type,
         businessName: business?.title,
         businessLogoUrl: business?.logoUrl,
-      );
+        currencyCode: business?.currencyCode,
+        paperProfile: printerConfig?['paperProfile'],
+      ).timeout(timeout);
 
       // 2️⃣ Connect to printer
       socket = await Socket.connect(printerIp, printerPort, timeout: timeout);
@@ -84,5 +99,36 @@ class ThermalPrinterService {
     } finally {
       socket?.destroy();
     }
+  }
+
+  String _extractPaperProfile(Map<String, dynamic> data) {
+    final stringFields = [
+      data['paperProfile'],
+      data['paperSize'],
+      data['paperWidth'],
+    ];
+
+    for (final field in stringFields) {
+      if (field is String && field.trim().isNotEmpty) {
+        return field.trim();
+      }
+    }
+
+    final widthInch = data['paperWidthInch'];
+    if (widthInch is num) {
+      if (widthInch >= 4) return '4inch';
+      if (widthInch >= 3) return '80mm';
+      return '58mm';
+    }
+
+    final widthMm = data['paperWidthMm'];
+    if (widthMm is num) {
+      if (widthMm >= 80) return '80mm';
+      if (widthMm >= 72) return '72mm';
+      return '58mm';
+    }
+
+    // Default to widest supported profile for "4-inch style" receipts.
+    return '80mm';
   }
 }

@@ -5,13 +5,16 @@ import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
 import 'package:hotel_management_system/data/repositories/buisness_repository.dart';
 import 'package:hotel_management_system/data/services/thermal_printer_service.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/permissions.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/create_order_screen.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/order_detail_dialog.dart';
+import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/order_recipt_pdf_generator.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/order_status_update_dialog.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/order_waiter_assignment_dialog.dart';
 import 'package:hotel_management_system/presentation/admin_screens/orders_management_screen/table_selection_dialog.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:hotel_management_system/state_management/order_state_and_notifier.dart';
 import 'package:hotel_management_system/state_management/table_state_and_notifier.dart';
 
@@ -821,6 +824,7 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
     final colorScheme = theme.colorScheme;
 
     final bool isBlinkingNow = isNew && _isBlinking;
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     final blinkAccentColor = _resolveBlinkAccentColor(order, colorScheme);
     final showAttentionBadge = isNew && _isAttentionOrder(order);
 
@@ -951,7 +955,10 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
                         ),
                       ),
                       Text(
-                        '\$${order.totalAmount.toStringAsFixed(2)}',
+                        CurrencyFormatter.formatAmount(
+                          order.totalAmount,
+                          currencyCode: currencyCode,
+                        ),
                         style: theme.textTheme.titleMedium?.copyWith(
                           color: colorScheme.primary,
                           fontWeight: FontWeight.bold,
@@ -1209,19 +1216,92 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
             title: Text('Print'),
             contentPadding: EdgeInsets.zero,
           ),
-          onTap: () async {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                duration: Duration(seconds: 2),
-                backgroundColor: Colors.green,
-                content: Text('Printing Receipt...'),
-              ),
+          onTap: () {
+            unawaited(
+              Future<void>(() async {
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    duration: Duration(seconds: 2),
+                    backgroundColor: Colors.green,
+                    content: Text('Printing Receipt...'),
+                  ),
+                );
+
+                try {
+                  await ThermalPrinterService().printOrderLAN(
+                    order,
+                    type: '',
+                    businessId: businessId,
+                    branchId: branchId,
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      duration: const Duration(seconds: 3),
+                      backgroundColor: Colors.orange,
+                      content: Text('Print failed: $e'),
+                    ),
+                  );
+                }
+              }),
             );
-            await ThermalPrinterService().printOrderLAN(
-              order,
-              type: '',
-              businessId: businessId,
-              branchId: branchId,
+          },
+        ),
+      );
+
+      items.add(
+        PopupMenuItem(
+          value: 'download_pdf',
+          child: const ListTile(
+            leading: Icon(Icons.picture_as_pdf),
+            title: Text('Download PDF'),
+            contentPadding: EdgeInsets.zero,
+          ),
+          onTap: () {
+            unawaited(
+              Future<void>(() async {
+                if (!mounted) return;
+                final messenger = ScaffoldMessenger.of(context);
+                messenger.showSnackBar(
+                  const SnackBar(
+                    duration: Duration(seconds: 2),
+                    content: Text('Preparing PDF...'),
+                  ),
+                );
+
+                try {
+                  final pdf = await OrderPdfGenerator.generateOrderPdf(
+                    order: order,
+                    businessId: businessId,
+                    includeTax: false,
+                  );
+
+                  final fileName =
+                      'Order_${order.orderId}_${DateTime.now().millisecondsSinceEpoch}';
+                  await OrderPdfGenerator.sharePdf(pdf, fileName);
+
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      duration: Duration(seconds: 2),
+                      backgroundColor: Colors.green,
+                      content: Text('PDF ready to download/share.'),
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      duration: const Duration(seconds: 3),
+                      backgroundColor: Colors.red,
+                      content: Text('Failed to generate PDF: $e'),
+                    ),
+                  );
+                }
+              }),
             );
           },
         ),
@@ -1412,11 +1492,281 @@ class _OrderManagementScreenState extends ConsumerState<OrderManagementScreen> {
   }
 
   void _showEditOrderDialog(BuildContext context, OrderModel order) {
-    // Implementation for edit order dialog
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Edit Order functionality - To be implemented'),
-      ),
+    final productParams = (businessId: businessId, branchId: branchId);
+    ref.read(productProvider(productParams).notifier).loadAllProducts();
+
+    final updatedItems = List<OrderItem>.from(order.items);
+    var totalAmount = order.totalAmount;
+    var isSaving = false;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return Consumer(
+          builder: (dialogContext, dialogRef, _) {
+            return StatefulBuilder(
+              builder: (dialogContext, setDialogState) {
+                final productState = dialogRef.watch(
+                  productProvider(productParams),
+                );
+                final currencyCode = dialogRef.watch(
+                  tenantCurrencyCodeProvider,
+                );
+                final availableProducts = productState.products
+                    .where((product) => product.isAvailable)
+                    .toList();
+
+                return AlertDialog(
+                  title: const Text('Edit Order'),
+                  content: SingleChildScrollView(
+                    child: SizedBox(
+                      width: 500,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Current Items',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          if (updatedItems.isEmpty)
+                            const Text('No items in this order.'),
+                          ...updatedItems.map((item) {
+                            return Card(
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              child: ListTile(
+                                title: Text(item.productName),
+                                subtitle: Text(
+                                  'Qty: ${item.quantity} × ${CurrencyFormatter.formatAmount(item.price, currencyCode: currencyCode)}',
+                                ),
+                                trailing: IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.red,
+                                  ),
+                                  onPressed: () {
+                                    setDialogState(() {
+                                      updatedItems.remove(item);
+                                      totalAmount -=
+                                          (item.quantity * item.price);
+                                    });
+                                  },
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                          const SizedBox(height: 12),
+                          const Divider(),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Add Product',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          if (productState.isLoading)
+                            const Center(child: CircularProgressIndicator())
+                          else if (productState.error != null)
+                            Text(
+                              'Failed to load products: ${productState.error}',
+                            )
+                          else if (availableProducts.isEmpty)
+                            const Text('No available products found.')
+                          else
+                            DropdownButtonFormField<String>(
+                              decoration: const InputDecoration(
+                                labelText: 'Select Product',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: availableProducts.map((product) {
+                                return DropdownMenuItem(
+                                  value: product.productId,
+                                  child: Text(product.name),
+                                );
+                              }).toList(),
+                              onChanged: (selectedProductId) {
+                                if (selectedProductId == null) return;
+                                final selectedProduct = availableProducts
+                                    .firstWhere(
+                                      (p) => p.productId == selectedProductId,
+                                    );
+                                final qtyController = TextEditingController();
+
+                                showDialog<void>(
+                                  context: context,
+                                  builder: (addContext) => AlertDialog(
+                                    title: Text('Add ${selectedProduct.name}'),
+                                    content: TextField(
+                                      controller: qtyController,
+                                      keyboardType: TextInputType.number,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Quantity',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.of(addContext).pop(),
+                                        child: const Text('Cancel'),
+                                      ),
+                                      FilledButton(
+                                        onPressed: () {
+                                          final qty =
+                                              int.tryParse(
+                                                qtyController.text.trim(),
+                                              ) ??
+                                              1;
+                                          if (qty > 0) {
+                                            setDialogState(() {
+                                              final existingIndex = updatedItems
+                                                  .indexWhere(
+                                                    (item) =>
+                                                        item.productId ==
+                                                        selectedProduct
+                                                            .productId,
+                                                  );
+
+                                              if (existingIndex >= 0) {
+                                                final existing =
+                                                    updatedItems[existingIndex];
+                                                updatedItems[existingIndex] =
+                                                    existing.copyWith(
+                                                      quantity:
+                                                          existing.quantity +
+                                                          qty,
+                                                      price:
+                                                          selectedProduct.price,
+                                                      productName:
+                                                          selectedProduct.name,
+                                                    );
+                                              } else {
+                                                updatedItems.add(
+                                                  OrderItem(
+                                                    productId: selectedProduct
+                                                        .productId,
+                                                    productName:
+                                                        selectedProduct.name,
+                                                    quantity: qty,
+                                                    price:
+                                                        selectedProduct.price,
+                                                  ),
+                                                );
+                                              }
+                                              totalAmount +=
+                                                  (qty * selectedProduct.price);
+                                            });
+                                            Navigator.of(addContext).pop();
+                                          }
+                                        },
+                                        child: const Text('Add'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          const SizedBox(height: 12),
+                          const Divider(),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Total:',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              Text(
+                                CurrencyFormatter.formatAmount(
+                                  totalAmount,
+                                  currencyCode: currencyCode,
+                                ),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: Colors.green,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: isSaving
+                          ? null
+                          : () => Navigator.of(dialogContext).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed: isSaving
+                          ? null
+                          : () async {
+                              if (updatedItems.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Order must have at least one item',
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+
+                              setDialogState(() => isSaving = true);
+                              try {
+                                final updatedOrder = order.copyWith(
+                                  items: updatedItems,
+                                  totalAmount: totalAmount,
+                                  updatedAt: DateTime.now(),
+                                );
+                                await _orderNotifier.updateOrder(updatedOrder);
+                                if (!mounted) return;
+                                Navigator.of(dialogContext).pop();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Order updated successfully'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                                _refreshOrders();
+                              } catch (e) {
+                                setDialogState(() => isSaving = false);
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Failed to update order: $e'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            },
+                      child: isSaving
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Save Changes'),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 

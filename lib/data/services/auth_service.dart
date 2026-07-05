@@ -96,6 +96,38 @@ class AuthService {
     return _auth.currentUser != null;
   }
 
+  /// Change password for the currently logged-in email/password account.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _ensurePersistenceConfigured();
+
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw FirebaseAuthException(
+        code: 'no-current-user',
+        message: 'No authenticated user found.',
+      );
+    }
+
+    final email = user.email;
+    if (email == null || email.trim().isEmpty) {
+      throw FirebaseAuthException(
+        code: 'missing-email',
+        message: 'Current account does not support password changes.',
+      );
+    }
+
+    final credential = EmailAuthProvider.credential(
+      email: email.trim(),
+      password: currentPassword,
+    );
+
+    await user.reauthenticateWithCredential(credential);
+    await user.updatePassword(newPassword);
+  }
+
   //Delete account
   Future<void> deleteAccount() async {
     await _auth.currentUser?.delete();

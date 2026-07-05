@@ -12,6 +12,7 @@ import 'package:hotel_management_system/data/repositories/images_storage_reposit
 import 'package:hotel_management_system/data/services/image_storage_service.dart';
 import 'package:hotel_management_system/presentation/client_screens/widgets/app_error_widget.dart';
 import 'package:hotel_management_system/presentation/client_screens/widgets/loading_indicator.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
 import 'package:hotel_management_system/state_management/current_tenant_business_provider.dart';
 
@@ -239,6 +240,187 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _showChangePasswordDialog() async {
+    final currentPasswordController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        var isSubmitting = false;
+        var showCurrentPassword = false;
+        var showNewPassword = false;
+        var showConfirmPassword = false;
+
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            Future<void> submit() async {
+              if (isSubmitting) return;
+              if (!formKey.currentState!.validate()) return;
+
+              setDialogState(() => isSubmitting = true);
+              try {
+                await ref
+                    .read(authNotifierProvider.notifier)
+                    .changePassword(
+                      currentPassword: currentPasswordController.text.trim(),
+                      newPassword: newPasswordController.text.trim(),
+                    );
+
+                if (!mounted) return;
+                Navigator.of(dialogContext).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Password updated successfully.'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                setDialogState(() => isSubmitting = false);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to change password: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Change Password'),
+              content: Form(
+                key: formKey,
+                child: SizedBox(
+                  width: 420,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        controller: currentPasswordController,
+                        obscureText: !showCurrentPassword,
+                        decoration: InputDecoration(
+                          labelText: 'Current Password',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              showCurrentPassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                showCurrentPassword = !showCurrentPassword;
+                              });
+                            },
+                          ),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Current password is required';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: newPasswordController,
+                        obscureText: !showNewPassword,
+                        decoration: InputDecoration(
+                          labelText: 'New Password',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              showNewPassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                showNewPassword = !showNewPassword;
+                              });
+                            },
+                          ),
+                        ),
+                        validator: (value) {
+                          final password = value?.trim() ?? '';
+                          if (password.isEmpty) {
+                            return 'New password is required';
+                          }
+                          if (password.length < 8) {
+                            return 'Password must be at least 8 characters';
+                          }
+                          if (password ==
+                              currentPasswordController.text.trim()) {
+                            return 'New password must be different';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: confirmPasswordController,
+                        obscureText: !showConfirmPassword,
+                        decoration: InputDecoration(
+                          labelText: 'Confirm New Password',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              showConfirmPassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                showConfirmPassword = !showConfirmPassword;
+                              });
+                            },
+                          ),
+                        ),
+                        validator: (value) {
+                          if ((value?.trim() ?? '') !=
+                              newPasswordController.text.trim()) {
+                            return 'Passwords do not match';
+                          }
+                          return null;
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: isSubmitting ? null : submit,
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Update Password'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    currentPasswordController.dispose();
+    newPasswordController.dispose();
+    confirmPasswordController.dispose();
   }
 
   List<Map<String, dynamic>> _getPermissionItems(UserModel user) {
@@ -485,6 +667,21 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Text(
+                      'Currency',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const Spacer(),
+                    Chip(
+                      label: Text(
+                        CurrencyFormatter.normalizeCode(business.currencyCode),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 const Text(
                   'Online Ordering Link',
                   style: TextStyle(fontWeight: FontWeight.w600),
@@ -540,6 +737,9 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
       builder: (dialogContext) {
         var isSavingBrand = false;
         var isUploadingLogo = false;
+        var selectedCurrencyCode = CurrencyFormatter.normalizeCode(
+          business.currencyCode,
+        );
         Uint8List? selectedLogoBytes;
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) {
@@ -763,6 +963,30 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
                           hintText: 'https://example.com/logo.png',
                         ),
                       ),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<String>(
+                        value: selectedCurrencyCode,
+                        decoration: const InputDecoration(
+                          labelText: 'Currency',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: CurrencyFormatter.usd,
+                            child: Text('USD (Dollar)'),
+                          ),
+                          DropdownMenuItem(
+                            value: CurrencyFormatter.pkr,
+                            child: Text('PKR (Pakistani Rupee)'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() {
+                            selectedCurrencyCode = value;
+                          });
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -795,11 +1019,13 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
                                   _businessLogoUrlController.text.trim().isEmpty
                                   ? null
                                   : _businessLogoUrlController.text.trim(),
+                              currencyCode: selectedCurrencyCode,
                               updatedAt: DateTime.now(),
                             );
                             await BusinessRepository().updateBusiness(
                               updatedBusiness,
                             );
+                            ref.invalidate(currentTenantBusinessProvider);
                             if (!mounted) return;
                             Navigator.of(dialogContext).pop();
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -1138,9 +1364,20 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Account Information',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Account Information',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _showChangePasswordDialog,
+                  icon: const Icon(Icons.lock_reset),
+                  label: const Text('Change Password'),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
 

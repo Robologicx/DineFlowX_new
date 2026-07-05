@@ -157,6 +157,16 @@ class OrderNotifier extends StateNotifier<OrderState> {
     }
   }
 
+  Future<void> updateOrder(OrderModel order) async {
+    try {
+      await _service.updateOrder(order);
+      await loadOrderById(order.orderId);
+    } catch (e) {
+      state = state.copyWith(error: e.toString());
+      rethrow;
+    }
+  }
+
   // Real-time listening method
   void listenToOrdersStream([String? userId]) {
     // _service

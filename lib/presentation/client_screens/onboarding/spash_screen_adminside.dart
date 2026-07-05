@@ -127,8 +127,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    // Start initialization when screen loads
-    ref.read(appInitializationProvider.future);
+    Future.microtask(() {
+      if (!mounted) return;
+      // Force a fresh initialization cycle each time splash is opened.
+      ref.invalidate(appInitializationProvider);
+      // Start initialization when screen loads
+      ref.read(appInitializationProvider.future);
+    });
   }
 
   void _navigateTo(String route) {
@@ -136,6 +141,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     _navigated = true;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       Navigator.pushReplacementNamed(context, route);
     });
   }
@@ -164,6 +170,16 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     final initializationAsync = ref.watch(appInitializationProvider);
     final initializationState = ref.watch(appInitializationStateProvider);
 
+    // Handle the case where initialization finished before listener attachment.
+    if (!_navigated &&
+        (initializationState == AppInitializationState.loggedOut ||
+            initializationState == AppInitializationState.initialized)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _handleInitializationResult();
+      });
+    }
+
     // Listen for initialization completion and navigate
     ref.listen<AsyncValue<void>>(appInitializationProvider, (previous, next) {
       next.when(
@@ -188,6 +204,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                 fit: BoxFit.contain,
                 width: 200,
                 height: 200,
+                errorBuilder: (context, error, stackTrace) =>
+                    const SizedBox.shrink(),
               ),
             ),
 

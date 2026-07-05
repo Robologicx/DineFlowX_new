@@ -59,8 +59,7 @@ class AdminAppRoutes {
   static const String productManagement = '/product-management';
 
   static Map<String, WidgetBuilder> routes = {
-    '/': (context) => const PortalSelectorScreen(),
-    splash: (context) => SplashScreen(),
+    splash: (context) => const SplashScreen(),
     portalSelector: (context) => const PortalSelectorScreen(),
     home: (context) => AdminShellWrapper(),
     login: (context) => const AdminLoginScreen(),
