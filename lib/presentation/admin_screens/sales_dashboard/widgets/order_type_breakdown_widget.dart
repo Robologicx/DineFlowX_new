@@ -1,12 +1,18 @@
 // widgets/order_type_breakdown_widget.dart
 import 'package:flutter/material.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/sales_model_and_management.dart';
 
 class OrderTypeBreakdownWidget extends StatelessWidget {
   final Map<OrderType, SalesMetric> ordersByType;
+  final String currencyCode;
 
-  const OrderTypeBreakdownWidget({super.key, required this.ordersByType});
+  const OrderTypeBreakdownWidget({
+    super.key,
+    required this.ordersByType,
+    required this.currencyCode,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -110,7 +116,10 @@ class OrderTypeBreakdownWidget extends StatelessWidget {
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         Text(
-                          'Rs ${metric.revenue.toStringAsFixed(2)}',
+                          CurrencyFormatter.formatAmount(
+                            metric.revenue,
+                            currencyCode: currencyCode,
+                          ),
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(fontWeight: FontWeight.w500),
                         ),

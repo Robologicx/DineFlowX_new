@@ -1,15 +1,18 @@
 // widgets/top_products_widget.dart
 import 'package:flutter/material.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/data/models/sales_model_and_management.dart';
 
 class TopProductsWidget extends StatelessWidget {
   final List<ProductSales> topProducts;
   final int maxProducts;
+  final String currencyCode;
 
   const TopProductsWidget({
     super.key,
     required this.topProducts,
     this.maxProducts = 5,
+    required this.currencyCode,
   });
 
   @override
@@ -162,7 +165,10 @@ class TopProductsWidget extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
-              'Rs ${product.revenue.toStringAsFixed(2)}',
+              CurrencyFormatter.formatAmount(
+                product.revenue,
+                currencyCode: currencyCode,
+              ),
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.bold,
                 color: Theme.of(context).colorScheme.primary,
@@ -176,7 +182,7 @@ class TopProductsWidget extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                'Rs ${(product.revenue / product.quantitySold).toStringAsFixed(2)}/item',
+                '${CurrencyFormatter.formatAmount((product.revenue / product.quantitySold), currencyCode: currencyCode)}/item',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.onPrimaryContainer,
                 ),

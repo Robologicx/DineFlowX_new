@@ -1,17 +1,53 @@
 rules_version = '2';
 
-// Craft rules based on data in your Firestore database
-// allow write: if firestore.get(
-//    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
 service firebase.storage {
   match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isPublicAssetFolder(folder) {
+      return folder in [
+        'product_images',
+        'category_images',
+        'menu_images',
+        'restaurant_logos'
+      ];
+    }
+
+    function isImageUpload() {
+      return request.resource != null
+          && request.resource.size < 10 * 1024 * 1024
+          && request.resource.contentType.matches('image/.*');
+    }
+
+    function isPrivateAllowedUpload() {
+      return request.resource != null
+          && request.resource.size < 15 * 1024 * 1024
+          && (
+            request.resource.contentType.matches('image/.*') ||
+            request.resource.contentType.matches('application/pdf')
+          );
+    }
+
+    // Tenant media path used by app uploads.
+    match /businesses/{businessId}/branches/{branchId}/{folder}/{fileName} {
+      // Public client/QR flows need menu/catalog image access without auth.
+      allow read: if isPublicAssetFolder(folder) || isSignedIn();
+
+      // Signed-in staff can create/update/delete tenant media.
+      // request.resource == null covers delete operations.
+      allow write: if isSignedIn()
+                   && (
+                     request.resource == null ||
+                     (isPublicAssetFolder(folder) && isImageUpload()) ||
+                     (!isPublicAssetFolder(folder) && isPrivateAllowedUpload())
+                   );
+    }
+
+    // Deny all other bucket paths.
     match /{allPaths=**} {
-      // Development rule: allow image upload and retrieval while app is in active development.
-      // Tighten this before production with authenticated role-based checks.
-      allow read: if true;
-      allow write: if request.resource != null
-                   && request.resource.size < 10 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*');
+      allow read, write: if false;
     }
   }
 }

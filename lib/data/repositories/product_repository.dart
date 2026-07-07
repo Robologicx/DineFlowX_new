@@ -1,4 +1,5 @@
 ﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hotel_management_system/core/local/offline_local_read_service.dart';
 import 'package:hotel_management_system/core/utils/offline_firestore_write_queue_service.dart';
 import '../models/product_model.dart';
 
@@ -21,6 +22,38 @@ class ProductRepository {
   final String _businessId;
   final String _branchId;
 
+  List<ProductModel> _mergeProductsPreferLocal({
+    required List<ProductModel> local,
+    required List<ProductModel> remote,
+  }) {
+    final merged = <String, ProductModel>{};
+    for (final product in remote) {
+      merged[product.productId] = product;
+    }
+    for (final product in local) {
+      merged[product.productId] = product;
+    }
+    final list = merged.values.toList(growable: false);
+    list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return list;
+  }
+
+  Future<List<ProductModel>> _getLocalProducts() async {
+    final localRows = await OfflineLocalReadService.instance
+        .getBranchCollection(
+          businessId: _businessId,
+          branchId: _branchId,
+          collectionName: 'products',
+        );
+
+    return localRows
+        .map(
+          (doc) =>
+              ProductModel.fromMap(doc, (doc['__documentId'] ?? '').toString()),
+        )
+        .toList(growable: false);
+  }
+
   /// 1️⃣ Get product by ID
   Future<ProductModel?> getProductById(String productId) async {
     try {
@@ -35,20 +68,26 @@ class ProductRepository {
   }
 
   Future<List<ProductModel>> getAllProducts() async {
+    final local = await _getLocalProducts();
     try {
       final doc = await _productsRef
           .where('isAvailable', isEqualTo: true)
           .get();
-      if (doc.docs.isEmpty) return [];
-      return doc.docs
+      final remote = doc.docs
           .map(
             (doc) => ProductModel.fromMap(
               doc.data() as Map<String, dynamic>,
               doc.id,
             ),
           )
-          .toList();
+          .toList(growable: false);
+
+      final merged = _mergeProductsPreferLocal(local: local, remote: remote);
+      return merged.where((product) => product.isAvailable).toList();
     } catch (e) {
+      if (local.isNotEmpty) {
+        return local.where((product) => product.isAvailable).toList();
+      }
       throw Exception("Error fetching all products: $e");
     }
   }
@@ -78,21 +117,39 @@ class ProductRepository {
 
   /// 3️⃣ Get all products by Category ID
   Future<List<ProductModel>> getProductsByCategory(String categoryId) async {
+    final local = await _getLocalProducts();
     try {
       final query = await _productsRef
           .where('categoryId', isEqualTo: categoryId)
           .where('isAvailable', isEqualTo: true)
           .get();
 
-      return query.docs
+      final remote = query.docs
           .map(
             (doc) => ProductModel.fromMap(
               doc.data() as Map<String, dynamic>,
               doc.id,
             ),
           )
+          .toList(growable: false);
+
+      final merged = _mergeProductsPreferLocal(local: local, remote: remote);
+      return merged
+          .where(
+            (product) =>
+                product.isAvailable && product.categoryId == categoryId,
+          )
           .toList();
     } catch (e) {
+      final fallback = local
+          .where(
+            (product) =>
+                product.isAvailable && product.categoryId == categoryId,
+          )
+          .toList();
+      if (fallback.isNotEmpty) {
+        return fallback;
+      }
       throw Exception("Error fetching products by category: $e");
     }
   }

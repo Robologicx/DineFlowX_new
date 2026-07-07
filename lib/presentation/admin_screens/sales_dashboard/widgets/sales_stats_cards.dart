@@ -1,5 +1,6 @@
 // widgets/sales_stats_cards.dart
 import 'package:flutter/material.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 
 class SalesStatsCards extends StatelessWidget {
   final double totalRevenue;
@@ -9,6 +10,7 @@ class SalesStatsCards extends StatelessWidget {
   final int totalOrders;
   final double averageOrderValue;
   final int activeOrders;
+  final String currencyCode;
 
   const SalesStatsCards({
     super.key,
@@ -19,6 +21,7 @@ class SalesStatsCards extends StatelessWidget {
     required this.totalOrders,
     required this.averageOrderValue,
     required this.activeOrders,
+    required this.currencyCode,
   });
 
   @override
@@ -46,29 +49,43 @@ class SalesStatsCards extends StatelessWidget {
               context,
               icon: Icons.payments,
               title: 'Total Revenue',
-              value: 'Rs ${totalRevenue.toStringAsFixed(2)}',
+              value: CurrencyFormatter.formatAmount(
+                totalRevenue,
+                currencyCode: currencyCode,
+              ),
               color: Colors.green,
             ),
             _buildStatCard(
               context,
               icon: Icons.money_off,
               title: 'Total Expenses',
-              value: 'Rs ${totalExpenses.toStringAsFixed(2)}',
+              value: CurrencyFormatter.formatAmount(
+                totalExpenses,
+                currencyCode: currencyCode,
+              ),
               color: Colors.red,
             ),
             _buildStatCard(
               context,
               icon: Icons.account_balance_wallet,
               title: 'Cash in Hand',
-              value: 'Rs ${cashInHand.toStringAsFixed(2)}',
-              color: cashInHand >= 0 ? Colors.green.shade700 : Colors.red.shade700,
+              value: CurrencyFormatter.formatAmount(
+                cashInHand,
+                currencyCode: currencyCode,
+              ),
+              color: cashInHand >= 0
+                  ? Colors.green.shade700
+                  : Colors.red.shade700,
               subtitle: cashInHand >= 0 ? 'After expenses' : 'Deficit',
             ),
             _buildStatCard(
               context,
               icon: profitOrLoss >= 0 ? Icons.trending_up : Icons.trending_down,
               title: 'Profit / Loss',
-              value: 'Rs ${profitOrLoss.toStringAsFixed(2)}',
+              value: CurrencyFormatter.formatAmount(
+                profitOrLoss,
+                currencyCode: currencyCode,
+              ),
               color: profitOrLoss >= 0 ? Colors.teal : Colors.deepOrange,
             ),
             _buildStatCard(
@@ -82,7 +99,10 @@ class SalesStatsCards extends StatelessWidget {
               context,
               icon: Icons.trending_up,
               title: 'Avg Order Value',
-              value: 'Rs ${averageOrderValue.toStringAsFixed(2)}',
+              value: CurrencyFormatter.formatAmount(
+                averageOrderValue,
+                currencyCode: currencyCode,
+              ),
               color: Colors.orange,
             ),
             _buildStatCard(

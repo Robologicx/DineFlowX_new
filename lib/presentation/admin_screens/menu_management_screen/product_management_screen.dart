@@ -42,9 +42,10 @@ class _ProductManagementScreenState
   String _searchQuery = '';
   String? _selectedCategoryFilter;
   bool _showAvailableOnly = false;
-  List<CategoryModel> _categories = [];
   String branchId = BusinessRepository.temporaryBranchId;
   String businessId = BusinessRepository.temporaryBusinesshId;
+  String _activeBusinessId = '';
+  String _activeBranchId = '';
 
   @override
   void initState() {
@@ -60,41 +61,46 @@ class _ProductManagementScreenState
         businessId = user.primarybusinessId;
       }
 
-      // Load categories
-      ref
-          .read(
-            categoryProvider((
-              branchId: branchId,
-              businessId: businessId,
-            )).notifier,
-          )
-          .loadAllCategories()
-          .then((categories) {
-            setState(() {
-              _categories = categories;
-            });
-          });
-
-      ref
-          .read(
-            menuProvider((branchId: branchId, businessId: businessId)).notifier,
-          )
-          .loadAllMenus();
-
-      // Load products
-      final productNotifier = ref.read(
-        productProvider((branchId: branchId, businessId: businessId)).notifier,
+      _loadDataForTenant(
+        businessId: businessId,
+        branchId: branchId,
+        honorInitialCategory: true,
       );
-
-      if (widget.categoryId != null) {
-        productNotifier.loadProductsByCategory(widget.categoryId!);
-        setState(() {
-          _selectedCategoryFilter = widget.categoryId;
-        });
-      } else {
-        productNotifier.loadAllProducts();
-      }
     });
+  }
+
+  void _loadDataForTenant({
+    required String businessId,
+    required String branchId,
+    bool honorInitialCategory = false,
+  }) {
+    _activeBusinessId = businessId;
+    _activeBranchId = branchId;
+
+    ref
+        .read(
+          categoryProvider((
+            branchId: branchId,
+            businessId: businessId,
+          )).notifier,
+        )
+        .loadAllCategories();
+
+    ref
+        .read(
+          menuProvider((branchId: branchId, businessId: businessId)).notifier,
+        )
+        .loadAllMenus();
+
+    final productNotifier = ref.read(
+      productProvider((branchId: branchId, businessId: businessId)).notifier,
+    );
+
+    productNotifier.loadAllProducts();
+
+    if (honorInitialCategory && widget.categoryId != null) {
+      _selectedCategoryFilter = widget.categoryId;
+    }
   }
 
   @override
@@ -103,15 +109,27 @@ class _ProductManagementScreenState
     super.dispose();
   }
 
-  List<ProductModel> _filterProducts(List<ProductModel> products) {
+  List<ProductModel> _filterProducts(
+    List<ProductModel> products, {
+    List<CategoryModel> categories = const [],
+  }) {
     var filtered = products;
 
     // Filter by selected category if any
     if (_selectedCategoryFilter != null &&
         _selectedCategoryFilter!.isNotEmpty) {
-      filtered = filtered
-          .where((product) => product.categoryId == _selectedCategoryFilter)
-          .toList();
+      final selectedCategory = _findCategoryById(
+        categories,
+        _selectedCategoryFilter!,
+      );
+      final selectedCategoryName = selectedCategory?.name.trim().toLowerCase();
+
+      filtered = filtered.where((product) {
+        final rawCategory = product.categoryId.trim();
+        if (rawCategory == _selectedCategoryFilter) return true;
+        return selectedCategoryName != null &&
+            rawCategory.toLowerCase() == selectedCategoryName;
+      }).toList();
     }
 
     // Filter by availability
@@ -135,6 +153,32 @@ class _ProductManagementScreenState
     }
 
     return filtered;
+  }
+
+  CategoryModel? _findCategoryById(List<CategoryModel> categories, String id) {
+    for (final category in categories) {
+      if (category.id == id) return category;
+    }
+    return null;
+  }
+
+  String _resolveCategoryName(
+    ProductModel product,
+    List<CategoryModel> categories,
+  ) {
+    final byId = _findCategoryById(categories, product.categoryId);
+    if (byId != null) return byId.name;
+
+    // Backward compatibility for older data where category name was stored
+    // in the categoryId field.
+    final raw = product.categoryId.trim().toLowerCase();
+    for (final category in categories) {
+      if (category.name.trim().toLowerCase() == raw) {
+        return category.name;
+      }
+    }
+
+    return 'Unknown Category';
   }
 
   ProductNotifier get _productNotifier {
@@ -191,7 +235,21 @@ class _ProductManagementScreenState
         businessId: effectiveBusinessId,
       )),
     );
-    final filteredForExport = _filterProducts(productsAsync.products);
+    final filteredForExport = _filterProducts(
+      productsAsync.products,
+      categories: categoryState.categories,
+    );
+
+    if (_activeBusinessId != effectiveBusinessId ||
+        _activeBranchId != effectiveBranchId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _loadDataForTenant(
+          businessId: effectiveBusinessId,
+          branchId: effectiveBranchId,
+        );
+      });
+    }
 
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -390,7 +448,10 @@ class _ProductManagementScreenState
       );
     }
 
-    final filteredProducts = _filterProducts(state.products);
+    final filteredProducts = _filterProducts(
+      state.products,
+      categories: categories,
+    );
 
     if (filteredProducts.isEmpty) {
       return Center(
@@ -485,11 +546,6 @@ class _ProductManagementScreenState
         ],
         onChanged: (value) {
           setState(() => _selectedCategoryFilter = value);
-          if (value != null) {
-            _productNotifier.loadProductsByCategory(value);
-          } else {
-            _productNotifier.loadAllProducts();
-          }
         },
       ),
     );
@@ -548,18 +604,7 @@ class _ProductManagementScreenState
   }) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final categoryName = categories
-        .firstWhere(
-          (category) => category.id == product.categoryId,
-          orElse: () => CategoryModel(
-            id: '',
-            name: 'Unknown Category',
-            menuId: '',
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          ),
-        )
-        .name;
+    final categoryName = _resolveCategoryName(product, categories);
 
     if (isListView) {
       return Dismissible(
@@ -586,10 +631,22 @@ class _ProductManagementScreenState
           }
           return false;
         },
-        child: _buildProductListTile(product, categoryName, theme, colorScheme),
+        child: _buildProductListTile(
+          product,
+          categoryName,
+          categories,
+          theme,
+          colorScheme,
+        ),
       );
     } else {
-      return _buildProductGridCard(product, categoryName, theme, colorScheme);
+      return _buildProductGridCard(
+        product,
+        categoryName,
+        categories,
+        theme,
+        colorScheme,
+      );
     }
   }
 
@@ -628,6 +685,7 @@ class _ProductManagementScreenState
   Widget _buildProductListTile(
     ProductModel product,
     String categoryName,
+    List<CategoryModel> categories,
     ThemeData theme,
     ColorScheme colorScheme,
   ) {
@@ -711,7 +769,7 @@ class _ProductManagementScreenState
           ],
         ),
         trailing: PopupMenuButton(
-          itemBuilder: (context) => _buildPopupMenuItems(product, _categories),
+          itemBuilder: (context) => _buildPopupMenuItems(product, categories),
         ),
       ),
     );
@@ -720,6 +778,7 @@ class _ProductManagementScreenState
   Widget _buildProductGridCard(
     ProductModel product,
     String categoryName,
+    List<CategoryModel> categories,
     ThemeData theme,
     ColorScheme colorScheme,
   ) {
@@ -813,7 +872,7 @@ class _ProductManagementScreenState
                       ),
                       PopupMenuButton(
                         itemBuilder: (context) =>
-                            _buildPopupMenuItems(product, _categories),
+                            _buildPopupMenuItems(product, categories),
                         child: Icon(
                           Icons.more_vert,
                           color: colorScheme.onSurfaceVariant,
@@ -1754,11 +1813,7 @@ class _ProductManagementScreenState
   }
 
   Future<void> _refreshProducts() async {
-    if (widget.categoryId != null) {
-      _productNotifier.loadProductsByCategory(widget.categoryId!);
-    } else {
-      await _productNotifier.loadAllProducts();
-    }
+    await _productNotifier.loadAllProducts();
   }
 
   Future<bool> _showDeleteConfirmation(

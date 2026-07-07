@@ -2,12 +2,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/core/utils/offline_order_queue_service.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_button.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_text_field.dart';
 import 'package:hotel_management_system/routes/client_app_routes.dart';
 import 'package:hotel_management_system/state_management/client_cart_state_and_notifier.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:hotel_management_system/state_management/order_state_and_notifier.dart';
 import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 import 'package:uuid/uuid.dart';
@@ -74,6 +76,7 @@ class _CheckOutScreenState extends ConsumerState<CheckOutScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
 
@@ -165,7 +168,10 @@ class _CheckOutScreenState extends ConsumerState<CheckOutScreen> {
                         ),
                         const Spacer(),
                         Text(
-                          '${widget.totalAmount} RS',
+                          CurrencyFormatter.formatAmount(
+                            widget.totalAmount,
+                            currencyCode: currencyCode,
+                          ),
                           style: Theme.of(context).textTheme.bodyLarge,
                         ),
                       ],

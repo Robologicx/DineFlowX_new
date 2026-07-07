@@ -8,10 +8,12 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/data/models/product_model.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/presentation/client_screens/widgets/loading_indicator.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 
 class ProductSelectionDialog extends ConsumerStatefulWidget {
   final String businessId;
@@ -157,6 +159,7 @@ class _ProductSelectionDialogState
 
   @override
   Widget build(BuildContext context) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     final productState = ref.watch(
       productProvider((
         businessId: widget.businessId,
@@ -329,7 +332,10 @@ class _ProductSelectionDialogState
                                                   BorderRadius.circular(4),
                                             ),
                                             child: Text(
-                                              'Rs ${product.price.toStringAsFixed(2)}',
+                                              CurrencyFormatter.formatAmount(
+                                                product.price,
+                                                currencyCode: currencyCode,
+                                              ),
                                               style: Theme.of(context)
                                                   .textTheme
                                                   .titleSmall
@@ -470,7 +476,7 @@ class _ProductSelectionDialogState
                               style: Theme.of(context).textTheme.bodyMedium,
                             ),
                             Text(
-                              'Total: Rs ${_calculateTotal(availableProducts).toStringAsFixed(2)}',
+                              'Total: ${CurrencyFormatter.formatAmount(_calculateTotal(availableProducts), currencyCode: currencyCode)}',
                               style: Theme.of(context).textTheme.titleMedium
                                   ?.copyWith(
                                     fontWeight: FontWeight.bold,

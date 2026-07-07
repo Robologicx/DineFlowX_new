@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/data/models/product_model.dart';
 import 'package:hotel_management_system/presentation/client_screens/helper/image_helper.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_button.dart';
 import 'package:hotel_management_system/routes/client_app_routes.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:hotel_management_system/state_management/favourite_provider.dart';
 
 class FavouriteItemsScreen extends ConsumerStatefulWidget {
@@ -18,6 +20,7 @@ class FavouriteItemsScreen extends ConsumerStatefulWidget {
 class _FavouriteItemsScreenState extends ConsumerState<FavouriteItemsScreen> {
   @override
   Widget build(BuildContext context) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     final product = ref.watch(favouriteProvider);
     return Scaffold(
       appBar: AppBar(
@@ -33,7 +36,11 @@ class _FavouriteItemsScreenState extends ConsumerState<FavouriteItemsScreen> {
                 itemCount: product.length,
                 itemBuilder: (BuildContext context, int index) {
                   final item = product[index];
-                  return _buildFavouriteItemCard(context, product: item);
+                  return _buildFavouriteItemCard(
+                    context,
+                    product: item,
+                    currencyCode: currencyCode,
+                  );
                 },
               )
             : Column(
@@ -73,6 +80,7 @@ class _FavouriteItemsScreenState extends ConsumerState<FavouriteItemsScreen> {
   Widget _buildFavouriteItemCard(
     BuildContext context, {
     required ProductModel product,
+    required String currencyCode,
   }) {
     return SizedBox(
       height: MediaQuery.of(context).size.height * 0.15,
@@ -117,7 +125,10 @@ class _FavouriteItemsScreenState extends ConsumerState<FavouriteItemsScreen> {
                       spacing: 70,
                       children: [
                         Text(
-                          'Rs ${product.price.toString()}',
+                          CurrencyFormatter.formatAmount(
+                            product.price,
+                            currencyCode: currencyCode,
+                          ),
                           style: Theme.of(context).textTheme.bodyLarge,
                         ),
                       ],

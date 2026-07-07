@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/core/utils/offline_order_queue_service.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/table_model.dart';
@@ -11,6 +12,7 @@ import 'package:hotel_management_system/presentation/client_screens/home/client_
 import 'package:hotel_management_system/presentation/common_widgets/custom_button.dart';
 import 'package:hotel_management_system/routes/client_app_routes.dart';
 import 'package:hotel_management_system/state_management/client_cart_state_and_notifier.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:hotel_management_system/state_management/direct_dining_state.dart';
 import 'package:hotel_management_system/state_management/order_state_and_notifier.dart';
 import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
@@ -296,6 +298,7 @@ class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     final cartItems = ref.watch(cartProvider);
     final cartNotifier = ref.read(cartProvider.notifier);
     final totalAmount = cartNotifier.totalAmount;
@@ -317,11 +320,12 @@ class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
       ),
       body: cartItems.isEmpty
           ? _buildEmptyCart(context)
-          : _buildCartList(context, cartItems),
+          : _buildCartList(context, cartItems, currencyCode),
       bottomNavigationBar: _buildCartSummary(
         context,
         ref,
         totalAmount,
+        currencyCode: currencyCode,
         items: cartItems,
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -354,7 +358,11 @@ class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
     );
   }
 
-  Widget _buildCartList(BuildContext context, List<OrderItem> cartItems) {
+  Widget _buildCartList(
+    BuildContext context,
+    List<OrderItem> cartItems,
+    String currencyCode,
+  ) {
     return ListView.separated(
       padding: const EdgeInsets.all(16),
       itemCount: cartItems.length,
@@ -370,9 +378,14 @@ class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
             ),
           ),
           title: Text(item.productName),
-          subtitle: Text('Rs ${item.price.toStringAsFixed(2)} each'),
+          subtitle: Text(
+            '${CurrencyFormatter.formatAmount(item.price, currencyCode: currencyCode)} each',
+          ),
           trailing: Text(
-            'Rs ${(item.price * item.quantity).toStringAsFixed(2)}',
+            CurrencyFormatter.formatAmount(
+              item.price * item.quantity,
+              currencyCode: currencyCode,
+            ),
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
         );
@@ -384,6 +397,7 @@ class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
     BuildContext context,
     WidgetRef ref,
     double totalAmount, {
+    required String currencyCode,
     required List<OrderItem> items,
   }) {
     final bool isCartEmpty = items.isEmpty;
@@ -456,7 +470,10 @@ class _AddToCartScreenState extends ConsumerState<AddToCartScreen> {
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
               Text(
-                'Rs ${totalAmount.toStringAsFixed(2)}',
+                CurrencyFormatter.formatAmount(
+                  totalAmount,
+                  currencyCode: currencyCode,
+                ),
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: Theme.of(context).colorScheme.primary,

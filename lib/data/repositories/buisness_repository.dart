@@ -51,6 +51,14 @@ class BusinessRepository {
         selected = selected.copyWith(title: other.title);
       }
 
+      final remoteCurrency = existing.currencyCode.trim().toUpperCase();
+      if (remoteCurrency.isNotEmpty &&
+          remoteCurrency != selected.currencyCode.trim().toUpperCase()) {
+        // Currency must stay consistent across devices; prefer cloud value
+        // when it is present to avoid stale local defaults overriding it.
+        selected = selected.copyWith(currencyCode: remoteCurrency);
+      }
+
       merged[item.id] = selected;
     }
     return merged.values.toList(growable: false);

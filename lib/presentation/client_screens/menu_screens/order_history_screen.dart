@@ -3,8 +3,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/routes/client_app_routes.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:hotel_management_system/state_management/order_state_and_notifier.dart';
 import 'package:intl/intl.dart' show DateFormat;
 
@@ -139,6 +141,7 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen>
     OrderModel product,
     double screenWidth,
   ) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     final theme = Theme.of(context);
     final bool isMobile = screenWidth < 600;
 
@@ -193,7 +196,10 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen>
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Rs ${product.totalAmount}',
+                    CurrencyFormatter.formatAmount(
+                      product.totalAmount,
+                      currencyCode: currencyCode,
+                    ),
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),

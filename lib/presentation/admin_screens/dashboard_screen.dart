@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_zoom_drawer/flutter_zoom_drawer.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/core/utils/offline_media_upload_queue_service.dart';
 import 'package:hotel_management_system/data/models/user_model.dart';
 import 'package:hotel_management_system/data/models/sales_model_and_management.dart'
@@ -13,6 +14,7 @@ import 'package:hotel_management_system/presentation/admin_screens/sales_dashboa
 import 'package:hotel_management_system/permissions.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
 import 'package:hotel_management_system/state_management/current_tenant_business_provider.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:hotel_management_system/state_management/tenant_context_provider.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -319,6 +321,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   // ---------- Placeholder Widgets (replace with actual UI) ----------
 
   Widget _buildRevenueChart(String businessId, String branchId) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     final salesState = ref.watch(
       salesProvider((businessId: businessId, branchId: branchId)),
     );
@@ -364,7 +367,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             Expanded(
               child: _metricTile(
                 title: 'Total Revenue',
-                value: _formatMoney(totalRevenue),
+                value: CurrencyFormatter.formatAmount(
+                  totalRevenue,
+                  currencyCode: currencyCode,
+                ),
                 color: Colors.green,
                 icon: Icons.trending_up,
               ),
@@ -373,7 +379,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             Expanded(
               child: _metricTile(
                 title: 'Total Expense',
-                value: _formatMoney(totalExpenses),
+                value: CurrencyFormatter.formatAmount(
+                  totalExpenses,
+                  currencyCode: currencyCode,
+                ),
                 color: Colors.orange,
                 icon: Icons.receipt_long,
               ),
@@ -391,7 +400,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             Expanded(
               child: _metricTile(
                 title: isProfit ? 'Profit' : 'Loss',
-                value: _formatMoney(profitOrLoss.abs()),
+                value: CurrencyFormatter.formatAmount(
+                  profitOrLoss.abs(),
+                  currencyCode: currencyCode,
+                ),
                 color: isProfit ? Colors.teal : Colors.red,
                 icon: isProfit ? Icons.savings : Icons.trending_down,
               ),
@@ -437,10 +449,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ],
       ),
     );
-  }
-
-  String _formatMoney(double amount) {
-    return 'Rs ${amount.toStringAsFixed(2)}';
   }
 
   Widget _buildQuickActionsButtons(

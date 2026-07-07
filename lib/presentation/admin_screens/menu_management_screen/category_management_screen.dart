@@ -41,11 +41,12 @@ class _CategoryManagementScreenState
       );
 
       if (widget.menuId != null) {
-        notifier.loadCategoriesByMenu(widget.menuId!);
         _selectedMenuFilter = widget.menuId;
-      } else {
-        notifier.loadAllCategories();
       }
+
+      // Keep provider state as full category set.
+      // Screen-level filtering is applied locally via _selectedMenuFilter.
+      notifier.loadAllCategories();
     });
   }
 
@@ -233,11 +234,6 @@ class _CategoryManagementScreenState
         ],
         onChanged: (value) {
           setState(() => _selectedMenuFilter = value);
-          if (value != null) {
-            notifier.loadCategoriesByMenu(value);
-          } else {
-            notifier.loadAllCategories();
-          }
         },
       ),
     );
@@ -794,11 +790,7 @@ class _CategoryManagementScreenState
   }
 
   Future<void> _refreshCategories(CategoryNotifier notifier) async {
-    if (widget.menuId != null) {
-      notifier.loadCategoriesByMenu(widget.menuId!);
-    } else {
-      notifier.loadAllCategories();
-    }
+    await notifier.loadAllCategories();
   }
 
   Future<bool> _showDeleteConfirmation(

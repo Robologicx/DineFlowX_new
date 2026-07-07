@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/product_model.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_button.dart';
 import 'package:hotel_management_system/presentation/common_widgets/custom_text_field.dart';
 import 'package:hotel_management_system/routes/client_app_routes.dart';
 import 'package:hotel_management_system/state_management/client_cart_state_and_notifier.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:hotel_management_system/state_management/direct_dining_state.dart';
 import 'package:hotel_management_system/state_management/favourite_provider.dart';
 import 'package:hotel_management_system/state_management/order_state_and_notifier.dart';
@@ -38,6 +40,7 @@ class _FoodItemDetailsScreenState extends ConsumerState<FoodItemDetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     final favourite = ref.watch(favouriteProvider);
     final orderRef = ref.read(orderNotifierProvider);
     final tenantContext = ref.watch(tenantContextProvider);
@@ -124,6 +127,7 @@ class _FoodItemDetailsScreenState extends ConsumerState<FoodItemDetailsScreen> {
                   title: widget.product.name,
                   description: widget.product.description,
                   price: widget.product.price.toString(),
+                  currencyCode: currencyCode,
                 ),
 
                 CustomTextField(
@@ -181,6 +185,7 @@ class _FoodItemDetailsScreenState extends ConsumerState<FoodItemDetailsScreen> {
     required String title,
     required String description,
     required String price,
+    required String currencyCode,
   }) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -197,7 +202,10 @@ class _FoodItemDetailsScreenState extends ConsumerState<FoodItemDetailsScreen> {
           ),
           SizedBox(height: MediaQuery.sizeOf(context).height * 0.01),
           Text(
-            "RS $price",
+            CurrencyFormatter.formatAmount(
+              double.tryParse(price) ?? 0,
+              currencyCode: currencyCode,
+            ),
             style: Theme.of(context).textTheme.bodySmall!.copyWith(
               fontWeight: FontWeight.w500,
               fontSize: 14,

@@ -13,7 +13,7 @@ class CategoryService {
   CategoryService(this._storageService, this._repository);
 
   /// Add category with validation
-  Future<void> addCategory(
+  Future<CategoryModel> addCategory(
     CategoryModel category,
     Uint8List? imageBytes,
     String fileExtension,
@@ -83,6 +83,8 @@ class CategoryService {
           fileExtension: pendingExtension,
         );
       }
+
+      return savedCategory;
     } catch (e) {
       rethrow;
     }

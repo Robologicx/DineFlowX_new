@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/data/models/expense_model.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:hotel_management_system/state_management/expense_sync_providers.dart';
 
 class ExpenseManagementScreen extends ConsumerStatefulWidget {
@@ -107,6 +109,7 @@ class _ExpenseManagementScreenState
     );
 
     final connectivityAsyncValue = ref.watch(connectivityStatusProvider);
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -159,7 +162,14 @@ class _ExpenseManagementScreenState
           ),
           // Day filter chips
           _buildDateFilterBar(context),
-          Expanded(child: _buildBody(context, expensesAsyncValue, params)),
+          Expanded(
+            child: _buildBody(
+              context,
+              expensesAsyncValue,
+              currencyCode,
+              params,
+            ),
+          ),
         ],
       ),
     );
@@ -268,6 +278,7 @@ class _ExpenseManagementScreenState
   Widget _buildBody(
     BuildContext context,
     AsyncValue<List<ExpenseModel>> expensesAsyncValue,
+    String currencyCode,
     ({String businessId, String branchId}) params,
   ) {
     return expensesAsyncValue.when(
@@ -331,7 +342,7 @@ class _ExpenseManagementScreenState
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                'Total${filterLabel.isNotEmpty ? ' · $filterLabel' : ''}: Rs ${total.toStringAsFixed(2)}',
+                'Total${filterLabel.isNotEmpty ? ' · $filterLabel' : ''}: ${CurrencyFormatter.formatAmount(total, currencyCode: currencyCode)}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
@@ -370,7 +381,10 @@ class _ExpenseManagementScreenState
                                   ?.copyWith(fontWeight: FontWeight.w700),
                             ),
                             Text(
-                              'Rs ${dayTotal.toStringAsFixed(2)}',
+                              CurrencyFormatter.formatAmount(
+                                dayTotal,
+                                currencyCode: currencyCode,
+                              ),
                               style: Theme.of(context).textTheme.labelLarge
                                   ?.copyWith(
                                     fontWeight: FontWeight.w700,
@@ -403,7 +417,10 @@ class _ExpenseManagementScreenState
                                     crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
                                       Text(
-                                        'Rs ${expense.amount.toStringAsFixed(2)}',
+                                        CurrencyFormatter.formatAmount(
+                                          expense.amount,
+                                          currencyCode: currencyCode,
+                                        ),
                                         style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                         ),

@@ -79,14 +79,19 @@ class CategoryNotifier extends StateNotifier<CategoryState> {
     String branchId,
   ) async {
     try {
-      await _service.addCategory(
+      final savedCategory = await _service.addCategory(
         category,
         imageBytes,
         fileExtension,
         businessId,
         branchId,
       );
-      state = state.copyWith(categories: [...state.categories, category]);
+      state = state.copyWith(
+        categories: [
+          savedCategory,
+          ...state.categories.where((c) => c.id != savedCategory.id),
+        ],
+      );
     } catch (e) {
       state = state.copyWith(error: e.toString());
       rethrow;

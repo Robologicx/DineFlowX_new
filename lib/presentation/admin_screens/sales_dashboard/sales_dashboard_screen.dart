@@ -15,6 +15,7 @@ import 'package:hotel_management_system/presentation/admin_screens/sales_dashboa
 import 'package:hotel_management_system/presentation/admin_screens/sales_dashboard/widgets/top_products_widget.dart';
 import 'package:hotel_management_system/state_management/app_providers.dart'
     hide salesProvider; // Assuming userProvider is here
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 
 /// SalesDashboardScreen: Main sales reporting and analytics dashboard widget
 /// Displays sales metrics, revenue trends, order breakdowns, and top products
@@ -115,6 +116,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
     // This observes: isLoading, error, currentReport, selectedPeriod, custom dates
     final salesState = ref.watch(salesProvider(_salesParams));
     final report = salesState.currentReport;
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -179,7 +181,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
                   const SizedBox(height: 24),
 
                   // Quick Stats Cards - displays key metrics (revenue, orders, AOV, active orders)
-                  _buildQuickStatsSection(report),
+                  _buildQuickStatsSection(report, currencyCode),
                   const SizedBox(height: 24),
 
                   // Revenue Chart - visualizes revenue trend over time
@@ -187,11 +189,11 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
                   const SizedBox(height: 24),
 
                   // Order Type Breakdown - shows sales distribution by order type (dine-in, delivery, etc.)
-                  _buildOrderTypeBreakdownSection(report),
+                  _buildOrderTypeBreakdownSection(report, currencyCode),
                   const SizedBox(height: 24),
 
                   // Top Products - displays best-selling products with sales metrics
-                  _buildTopProductsSection(report),
+                  _buildTopProductsSection(report, currencyCode),
                 ],
               ),
             ),
@@ -291,7 +293,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
 
   /// Quick Stats Section Widget Builder
   /// Displays key performance indicators: Total Revenue, Total Orders, Average Order Value, Active Orders
-  Widget _buildQuickStatsSection(SalesReport? report) {
+  Widget _buildQuickStatsSection(SalesReport? report, String currencyCode) {
     final revenue = report?.totalRevenue ?? 0.0;
     final expenses = report?.totalExpenses ?? 0.0;
     final activeOrders =
@@ -306,6 +308,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
       totalOrders: report?.totalOrders ?? 0,
       averageOrderValue: report?.averageOrderValue ?? 0.0,
       activeOrders: activeOrders,
+      currencyCode: currencyCode,
     );
   }
 
@@ -321,21 +324,26 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
 
   /// Order Type Breakdown Section Widget Builder
   /// Displays sales distribution by order type (e.g., dine-in, takeout, delivery, etc.)
-  Widget _buildOrderTypeBreakdownSection(SalesReport? report) {
+  Widget _buildOrderTypeBreakdownSection(
+    SalesReport? report,
+    String currencyCode,
+  ) {
     return OrderTypeBreakdownWidget(
       // Pass actual data (Map<OrderType, SalesMetric>)
       // Shows breakdown of orders and revenue by order type
       ordersByType: report?.ordersByType ?? {},
+      currencyCode: currencyCode,
     );
   }
 
   /// Top Products Section Widget Builder
   /// Displays best-selling products with quantity sold and revenue contribution
-  Widget _buildTopProductsSection(SalesReport? report) {
+  Widget _buildTopProductsSection(SalesReport? report, String currencyCode) {
     return TopProductsWidget(
       // Pass actual data (List<ProductSales>)
       // Each item contains: productId, productName, quantitySold, revenue
       topProducts: report?.topProducts ?? [],
+      currencyCode: currencyCode,
     );
   }
 
@@ -374,11 +382,15 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
 
   /// Helper function to create the PDF document content
   /// Generates a formatted PDF report with all sales data, tables, and metrics
-  Future<Uint8List> _generatePdfReport(SalesReport report) async {
+  Future<Uint8List> _generatePdfReport(
+    SalesReport report,
+    String currencyCode,
+  ) async {
     final pdf = pw.Document();
 
-    // Helper to format currency values with dollar sign and 2 decimal places
-    String formatCurrency(double amount) => '\$${amount.toStringAsFixed(2)}';
+    // Helper to format currency values with tenant currency code and 2 decimal places
+    String formatCurrency(double amount) =>
+        '$currencyCode ${amount.toStringAsFixed(2)}';
     // Helper to format dates in YYYY-MM-DD format
     String formatDate(DateTime date) => date.toString().substring(0, 10);
 
@@ -447,7 +459,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
                 ),
               ),
               pw.SizedBox(height: 10),
-              _buildRevenueTrendList(report.revenueByDay ?? {}),
+              _buildRevenueTrendList(report.revenueByDay ?? {}, formatCurrency),
             ],
           );
         },
@@ -540,7 +552,10 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
   // PDF Widget Builder: Revenue Trend List
   /// Builds a formatted list of daily revenue data for the PDF
   /// Shows: Date, Daily Revenue Amount
-  pw.Widget _buildRevenueTrendList(Map<String, double> revenueByDay) {
+  pw.Widget _buildRevenueTrendList(
+    Map<String, double> revenueByDay,
+    String Function(double) formatCurrency,
+  ) {
     final List<pw.Widget> items = [];
     if (revenueByDay.isEmpty) {
       // Handle case when no daily data is available
@@ -556,7 +571,7 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
               children: [
                 pw.Text(date, style: const pw.TextStyle(fontSize: 12)),
                 pw.Text(
-                  '\$${revenue.toStringAsFixed(2)}',
+                  formatCurrency(revenue),
                   style: pw.TextStyle(
                     fontWeight: pw.FontWeight.bold,
                     fontSize: 12,
@@ -601,7 +616,8 @@ class _SalesDashboardScreenState extends ConsumerState<SalesDashboardScreen> {
 
     try {
       // 1. Generate the PDF file bytes from report data
-      final Uint8List pdfBytes = await _generatePdfReport(report);
+      final currencyCode = ref.read(tenantCurrencyCodeProvider);
+      final Uint8List pdfBytes = await _generatePdfReport(report, currencyCode);
       // Create unique filename with timestamp for multiple exports
       final String fileName =
           'sales_report_${DateTime.now().millisecondsSinceEpoch}.pdf';

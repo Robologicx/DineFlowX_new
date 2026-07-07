@@ -2,11 +2,13 @@ import 'dart:developer';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hotel_management_system/core/utils/currency_formatter.dart';
 import 'package:hotel_management_system/core/widgets/icon_shadow_widget.dart';
 import 'package:hotel_management_system/data/models/order_model.dart';
 import 'package:hotel_management_system/data/models/product_model.dart';
 import 'package:hotel_management_system/presentation/client_screens/categories/food_item_details_screen.dart';
 import 'package:hotel_management_system/state_management/client_cart_state_and_notifier.dart';
+import 'package:hotel_management_system/state_management/currency_provider.dart';
 import 'package:shimmer_animation/shimmer_animation.dart';
 
 class FoodGrid extends ConsumerWidget {
@@ -16,6 +18,7 @@ class FoodGrid extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final currencyCode = ref.watch(tenantCurrencyCodeProvider);
     log('ImageURL:${product.imageUrl}');
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -106,7 +109,10 @@ class FoodGrid extends ConsumerWidget {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
-                                'Rs ${product.price.toString()}',
+                                CurrencyFormatter.formatAmount(
+                                  product.price,
+                                  currencyCode: currencyCode,
+                                ),
                                 style: Theme.of(context).textTheme.bodyLarge!
                                     .copyWith(
                                       fontSize: 14 * scale,
